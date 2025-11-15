@@ -1,4 +1,4 @@
-# LiveAvatar Real-Time Chat App
+# LFGTraining Platform
 
 A Next.js application that enables real-time AI conversations with avatars using LiveAvatar.com.
 
