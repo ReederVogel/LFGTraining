@@ -10,8 +10,6 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   // Enable React strict mode for better performance debugging
   reactStrictMode: true,
-  // Optimize production builds
-  swcMinify: true,
   // Experimental features for better performance
   experimental: {
     optimizePackageImports: ['@heygen/liveavatar-web-sdk'],
