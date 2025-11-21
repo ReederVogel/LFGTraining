@@ -12,7 +12,7 @@ export default function Card({
   onClick,
 }: CardProps) {
   const baseStyles = 'bg-white border border-gray-200 rounded-lg overflow-hidden transition-shadow';
-  const clickableStyles = onClick ? 'cursor-pointer hover:shadow-md' : '';
+  const clickableStyles = onClick ? 'group cursor-pointer hover:shadow-xl hover:shadow-slate-950/60' : '';
 
   return (
     <div

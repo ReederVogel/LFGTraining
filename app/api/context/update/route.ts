@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-export async function POST(request: NextRequest) {
-  const apiKey = process.env.LIVEAVATAR_API_KEY || process.env.NEXT_PUBLIC_LIVEAVATAR_API_KEY;
+export async function PUT(request: NextRequest) {
+  const apiKey = process.env.NEXT_PUBLIC_LIVEAVATAR_API_KEY || process.env.LIVEAVATAR_API_KEY;
 
   if (!apiKey) {
     return NextResponse.json(
@@ -12,50 +12,46 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { sessionId, contextId } = body;
-
-    if (!sessionId) {
-      return NextResponse.json(
-        { error: 'Session ID is required' },
-        { status: 400 }
-      );
-    }
+    const { contextId, name, prompt, opening_text } = body;
 
     if (!contextId) {
       return NextResponse.json(
-        { error: 'Context ID is required' },
+        { error: 'contextId is required' },
         { status: 400 }
       );
     }
 
-    // Start session with context
+    // Update context using LiveAvatar API
     const response = await fetch(
-      `https://api.liveavatar.com/v1/sessions/${sessionId}/start`,
+      `https://api.liveavatar.com/v1/contexts/${contextId}`,
       {
-        method: 'POST',
+        method: 'PUT',
         headers: {
           'X-API-KEY': apiKey,
           'Content-Type': 'application/json',
           'accept': 'application/json',
         },
         body: JSON.stringify({
-          context_id: contextId,
+          ...(name && { name }),
+          ...(prompt && { prompt }),
+          ...(opening_text && { opening_text }),
         }),
       }
     );
 
     if (!response.ok) {
       const errorText = await response.text();
+      console.error('LiveAvatar API error:', errorText);
       return NextResponse.json(
-        { error: `Failed to start session: ${errorText}` },
+        { error: `Failed to update context: ${errorText}` },
         { status: response.status }
       );
     }
 
-    const data = await response.json();
-    return NextResponse.json(data);
+    const context = await response.json();
+    return NextResponse.json(context);
   } catch (error) {
-    console.error('Error starting session:', error);
+    console.error('Error updating context:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

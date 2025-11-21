@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Avatar } from '@/types/avatar';
 import Card from './ui/Card';
@@ -21,40 +21,28 @@ export default React.memo(function AvatarCard({ avatar }: AvatarCardProps) {
     handleClick();
   }, [handleClick]);
 
-  // Memoize iframe URL to prevent unnecessary re-renders
-  const iframeUrl = useMemo(() => 
-    `https://embed.liveavatar.com/v1/${avatar.embedId}`,
-    [avatar.embedId]
-  );
-
   return (
-    <Card onClick={handleClick} className="w-full max-w-md">
-      {/* Avatar Preview */}
-      <div className="relative w-full h-80 bg-gradient-to-b from-gray-50 to-white overflow-hidden">
-        <iframe
-          src={iframeUrl}
-          allow="microphone"
-          className="absolute inset-0 w-full h-full border-0"
-          title={`${avatar.name} Preview`}
-          style={{ 
-            pointerEvents: 'none',
-          }}
-          loading="lazy"
-          aria-hidden="true"
+    <Card onClick={handleClick} className="w-full max-w-md bg-slate-900/40 border-white/10 shadow-xl shadow-slate-950/60 rounded-2xl overflow-hidden backdrop-blur">
+      {/* Avatar Image */}
+      <div className="relative w-full h-80 bg-gradient-to-b from-slate-900 to-slate-950 overflow-hidden">
+        <img
+          src={avatar.imageUrl}
+          alt={avatar.name}
+          className="absolute inset-0 h-full w-full object-cover opacity-90 transition duration-500 group-hover:scale-105"
         />
-        {/* Bottom fade to hide controls */}
-        <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-white via-white/90 to-transparent pointer-events-none"></div>
+        {/* Bottom gradient overlay */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent" />
       </div>
 
       {/* Content */}
-      <div className="p-8">
-        <h3 className="text-xl font-semibold text-gray-900 mb-6 text-center">
+      <div className="space-y-6 p-6 sm:p-7">
+        <h3 className="text-center text-lg font-semibold tracking-tight text-slate-50 sm:text-xl">
           {avatar.name}
         </h3>
         
         <button 
           onClick={handleButtonClick}
-          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-6 rounded-lg transition-colors"
+          className="w-full rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/40 transition hover:from-sky-400 hover:to-indigo-500 hover:shadow-blue-500/60"
         >
           Start Training
         </button>

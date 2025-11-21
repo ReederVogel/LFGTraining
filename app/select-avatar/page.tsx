@@ -23,33 +23,39 @@ export default function SelectAvatarPage() {
   const avatarList = useMemo(() => avatars, []);
 
   return (
-    <div className="min-h-screen py-8 px-4 sm:px-6 lg:px-8 flex flex-col items-center">
-      <div className="w-full max-w-6xl">
+    <div className="flex min-h-[calc(100vh-4rem)] justify-center px-4 py-10 pb-16 sm:py-12 sm:px-6 lg:px-8">
+      <div className="flex w-full max-w-6xl flex-col space-y-8 sm:space-y-10">
         {/* Back button */}
-        <div className="mb-12">
+        <div className="flex items-center justify-between">
           <button
             onClick={handleBack}
-            className="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
+            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-200 shadow-sm shadow-slate-900/40 transition hover:bg-white/10"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
-            <span className="font-medium">Back</span>
+            <span>Back</span>
           </button>
         </div>
 
         {/* Header */}
-        <div className="mb-20 text-center">
-          <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-4">
-            Select a Scenario
-          </h1>
-          <p className="text-lg text-gray-600">
-            Choose a training scenario to begin
-          </p>
+        <div className="mx-auto mt-4 w-full max-w-5xl overflow-hidden rounded-3xl border border-white/10 bg-slate-950/85 px-5 py-6 text-center shadow-2xl shadow-slate-950/80 sm:mt-6 sm:px-8 sm:py-8">
+          <div className="flex flex-col items-center space-y-3 sm:space-y-4">
+            <p className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-1 text-[11px] font-medium uppercase tracking-[0.22em] text-slate-200">
+              Scenario Library
+            </p>
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-50 sm:text-3xl">
+              Select a conversation to practice
+            </h1>
+            <p className="mx-auto max-w-3xl text-xs leading-relaxed text-slate-200 sm:text-sm">
+              Each avatar represents a different real‑world scenario. Choose one that matches a situation
+              you want to get better at handling.
+            </p>
+          </div>
         </div>
 
         {/* Avatar Cards Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 justify-items-center">
+        <div className="mx-auto mt-10 grid w-full max-w-5xl grid-cols-1 gap-8 justify-items-center md:mt-12 md:grid-cols-2">
           {avatarList.map((avatar) => (
             <AvatarCard key={avatar.id} avatar={avatar} />
           ))}
