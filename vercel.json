@@ -5,10 +5,6 @@
   "devCommand": "npm run dev",
   "installCommand": "npm install",
   "regions": ["iad1"],
-  "env": {
-    "LIVEAVATAR_API_KEY": "@liveavatar-api-key",
-    "NEXT_PUBLIC_DEEPGRAM_API_KEY": "@deepgram-api-key"
-  },
   "headers": [
     {
       "source": "/(.*)",
