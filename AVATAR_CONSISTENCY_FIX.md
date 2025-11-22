@@ -27,7 +27,7 @@ The Son avatar (Michael) was not behaving the same as the Widow avatar (Sarah) i
 // In app/api/liveavatar-session/route.ts
 
 // Added SON_CONTEXT_ID constant
-const SON_CONTEXT_ID = '7f393a67-ca66-4f69-a3aa-e0c3f4ca083a';
+const SON_CONTEXT_ID = 'c77340be-22b0-4927-b5ab-fa88455124f7';
 
 // Added opening variations for Michael (Son)
 if (contextId === SON_CONTEXT_ID) {

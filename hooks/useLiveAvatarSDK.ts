@@ -86,6 +86,14 @@ export function useLiveAvatarSDK({
   const audioGainRef = useRef<GainNode | null>(null); // Audio gain node for instant muting
   const userSpeakStartTimeRef = useRef<number>(0); // Track when user started speaking
   const userTranscriptionTimeoutRef = useRef<NodeJS.Timeout | null>(null); // Timeout to detect missing transcriptions
+  const sessionKeepaliveIntervalRef = useRef<NodeJS.Timeout | null>(null); // Keepalive to prevent session timeout
+  const lastActivityTimeRef = useRef<number>(Date.now()); // Track last activity to detect stalls
+  const connectionHealthIntervalRef = useRef<NodeJS.Timeout | null>(null); // Monitor connection health
+  const reconnectAttemptsRef = useRef<number>(0); // Track reconnection attempts
+  const sessionExpirationTimeRef = useRef<number>(0); // Track when session expires
+  const videoInitializedRef = useRef<boolean>(false); // Track if video has ever been ready
+  const lastGoodVideoStateTimeRef = useRef<number>(Date.now()); // Track when video was last in good state
+  const intentionalDisconnectRef = useRef<boolean>(false); // Track if disconnection is intentional (user clicked End Session)
 
   // Helper to check if a transcript was recently sent (within 5 seconds)
   // CRITICAL: Only checks against transcripts from the SAME speaker
@@ -99,14 +107,22 @@ export function useLiveAvatarSDK({
       entry => now - entry.time < 5000
     );
     
-    // Check for EXACT duplicates within the time window (last 3 seconds)
-    // Only block exact matches to avoid blocking legitimate variations
-    // Don't compare user transcripts with avatar transcripts!
-    return recentTranscriptsRef.current.some(
+    // Check for EXACT duplicates within the time window
+    // For USER messages: Use 1 second window (very short to allow legitimate repeated words)
+    // For AVATAR messages: Use 3 second window (longer since avatar shouldn't repeat)
+    const timeWindow = speaker === 'user' ? 1000 : 3000;
+    
+    const isDuplicate = recentTranscriptsRef.current.some(
       entry => entry.speaker === speaker && 
                entry.text === normalizedText && 
-               now - entry.time < 3000 // Only check last 3 seconds
+               now - entry.time < timeWindow
     );
+    
+    if (isDuplicate && speaker === 'user') {
+      console.log(`[LiveAvatarSDK] 🔍 Duplicate check: Found exact match within ${timeWindow}ms for USER message`);
+    }
+    
+    return isDuplicate;
   }, []);
 
   // Helper to record a sent transcript
@@ -396,19 +412,76 @@ export function useLiveAvatarSDK({
     // Session state events (use enum string values from SDK)
     session.on('session.state_changed', (state: any) => {
       console.log('[LiveAvatarSDK] 🔄 Session state changed:', state);
+      console.log('[LiveAvatarSDK] 🔍 intentionalDisconnect flag:', intentionalDisconnectRef.current);
+      lastActivityTimeRef.current = Date.now(); // Update activity time
+      
       if (state === 'CONNECTED') {
         setIsConnected(true);
         setError(null);
         onStatus?.('idle');
+        reconnectAttemptsRef.current = 0; // Reset reconnect attempts on successful connection
       }
       if (state === 'DISCONNECTED') {
+        // Check if this was an intentional disconnection (user clicked "End Session")
+        if (intentionalDisconnectRef.current) {
+          console.log('[LiveAvatarSDK] ℹ️ Session disconnected intentionally (user ended session) - no error');
+          setIsConnected(false);
+          onStatus?.('idle');
+          // Don't try to reconnect - user intentionally ended session
+          return;
+        }
+        
+        // Unintentional disconnection - connection was lost
+        console.warn('[LiveAvatarSDK] ⚠️ Session DISCONNECTED - connection lost (unintentional)');
         setIsConnected(false);
         onStatus?.('idle');
+        
+        // Attempt to reconnect if not intentionally disconnected
+        if (reconnectAttemptsRef.current < 3) {
+          reconnectAttemptsRef.current++;
+          console.log(`[LiveAvatarSDK] 🔄 Attempting reconnection (${reconnectAttemptsRef.current}/3)...`);
+          
+          setTimeout(() => {
+            if (sessionRef.current && reconnectAttemptsRef.current > 0) {
+              console.log('[LiveAvatarSDK] 🔄 Reconnecting session...');
+              // Try to restart the session
+              sessionRef.current.start().then(() => {
+                console.log('[LiveAvatarSDK] ✅ Reconnection successful!');
+                setIsConnected(true);
+                setError(null);
+              }).catch((err) => {
+                console.error('[LiveAvatarSDK] ❌ Reconnection failed:', err);
+                onError?.(`Connection lost. Reconnection attempt ${reconnectAttemptsRef.current} failed.`);
+              });
+            }
+          }, 2000); // Wait 2 seconds before reconnecting
+        } else {
+          console.error('[LiveAvatarSDK] ❌ Max reconnection attempts reached (3)');
+          onError?.('Connection lost. Please refresh the page to reconnect.');
+        }
       }
     });
 
     session.on('session.disconnected', (reason: any) => {
       console.log('[LiveAvatarSDK] 📴 Session disconnected:', reason);
+      
+      // Check if it's a user-initiated disconnection (normal) or an error
+      const reasonStr = typeof reason === 'string' ? reason : JSON.stringify(reason);
+      const isClientInitiated = reasonStr.includes('CLIENT_INITIATED') || reasonStr.includes('client_initiated');
+      
+      if (isClientInitiated) {
+        console.log('[LiveAvatarSDK] ℹ️ User disconnected session (normal)');
+      } else {
+        console.warn('[LiveAvatarSDK] ⚠️ Disconnection reason:', reasonStr);
+        
+        // Check if it's an error disconnection
+        if (reason && (reason.error || reason.code)) {
+          const errorMsg = reason.error || reason.message || `Disconnected with code: ${reason.code}`;
+          console.error('[LiveAvatarSDK] ❌ Disconnection error:', errorMsg);
+          onError?.(`Connection error: ${errorMsg}`);
+        }
+      }
+      
       setIsConnected(false);
       onStatus?.('idle');
     });
@@ -419,6 +492,16 @@ export function useLiveAvatarSDK({
       console.log('[LiveAvatarSDK] 🔊 Setting isSpeaking = TRUE');
       console.log('[LiveAvatarSDK] Event data:', event);
       console.log('[LiveAvatarSDK] 🔍 Interrupted state:', isInterruptedRef.current);
+      console.log('[LiveAvatarSDK] 🔍 Current response ref:', currentResponseRef.current?.substring(0, 50) || 'empty');
+      
+      // Log recent avatar messages to detect repetition loops
+      const recentAvatarMessages = recentTranscriptsRef.current
+        .filter(t => t.speaker === 'avatar')
+        .map(t => ({ text: t.text.substring(0, 40), timeAgo: `${((Date.now() - t.time) / 1000).toFixed(1)}s` }));
+      
+      if (recentAvatarMessages.length > 0) {
+        console.log('[LiveAvatarSDK] 📝 Recent avatar messages (last 5s):', recentAvatarMessages);
+      }
       
       // SAFETY CHECK: If still marked as interrupted, avatar might be trying to continue old response
       // This can happen if avatar doesn't properly stop and tries to resume
@@ -658,21 +741,30 @@ export function useLiveAvatarSDK({
         if (isFirstUserMessage) {
           console.log('[LiveAvatarSDK] 🎉 This is the FIRST user message - ALWAYS accepting it (no duplicate check)');
         } else {
-          // Check for EXACT duplicates ONLY against recent USER transcripts (within 3 seconds)
-          // Use exact match to avoid blocking legitimate variations
-          // Only block if it's the exact same corrected text within 3 seconds
+          // Check for EXACT duplicates ONLY against recent USER transcripts
+          // Use 1 second window (reduced from 3s) to avoid blocking legitimate messages
+          // Only block if it's the exact same corrected text within 1 second
           const now = Date.now();
           const isDuplicate = recentTranscriptsRef.current
-            .filter(t => t.speaker === 'user' && now - t.time < 3000) // Only check last 3 seconds
+            .filter(t => t.speaker === 'user' && now - t.time < 1000) // Changed: 1 second instead of 3
             .some(t => t.text === correctedNormalizedText); // Exact match only
           
           console.log('[LiveAvatarSDK] 🔍 Duplicate check result:', isDuplicate, 'for text:', correctedNormalizedText.substring(0, 50));
-          console.log('[LiveAvatarSDK] 📊 Recent user transcripts in memory:', 
-            recentTranscriptsRef.current.filter(t => t.speaker === 'user').map(t => t.text.substring(0, 30))
+          console.log('[LiveAvatarSDK] 📊 Recent user transcripts in memory (last 1 second):', 
+            recentTranscriptsRef.current
+              .filter(t => t.speaker === 'user' && now - t.time < 1000)
+              .map(t => ({ text: t.text.substring(0, 30), timeAgo: `${((now - t.time) / 1000).toFixed(2)}s` }))
           );
           
           if (isDuplicate) {
-            console.warn('[LiveAvatarSDK] ⚠️ Exact duplicate USER transcript detected (within 3s), skipping:', correctedNormalizedText.substring(0, 50));
+            console.warn('[LiveAvatarSDK] ⚠️ Exact duplicate USER transcript detected (within 1s), skipping:', correctedNormalizedText.substring(0, 50));
+            console.warn('[LiveAvatarSDK] 🚨 USER MESSAGE BLOCKED - This is why transcript is not showing!');
+            console.warn('[LiveAvatarSDK] 📊 Recent user transcripts that caused block:', 
+              recentTranscriptsRef.current.filter(t => t.speaker === 'user').map(t => ({
+                text: t.text.substring(0, 40),
+                timeAgo: `${((Date.now() - t.time) / 1000).toFixed(1)}s ago`
+              }))
+            );
             return;
           }
         }
@@ -685,12 +777,32 @@ export function useLiveAvatarSDK({
         }
         
         // correctedText already applied above
-        console.log('[LiveAvatarSDK] ✅ Passing USER transcript to UI (from user.transcription_ended):', correctedText);
-        console.log('[LiveAvatarSDK] 📤 Calling onTranscript(\'user\', correctedText, true)...');
+        console.log('[LiveAvatarSDK] ========================================');
+        console.log('[LiveAvatarSDK] 📢 USER TRANSCRIPT ABOUT TO BE SENT TO UI');
+        console.log('[LiveAvatarSDK] ========================================');
+        console.log('[LiveAvatarSDK] 📝 Text:', correctedText);
+        console.log('[LiveAvatarSDK] 📝 Text length:', correctedText.length);
+        console.log('[LiveAvatarSDK] 📝 Is final:', true);
+        console.log('[LiveAvatarSDK] 📝 Speaker:', 'user');
+        console.log('[LiveAvatarSDK] 📝 Has onTranscript callback:', !!onTranscript);
+        console.log('[LiveAvatarSDK] 📝 Callback type:', typeof onTranscript);
+        console.log('[LiveAvatarSDK] 📝 User message #:', userMessageCount + 1);
+        console.log('[LiveAvatarSDK] 📝 Timestamp:', new Date().toISOString());
+        
         lastUserSpeakTimeRef.current = Date.now();
         recordTranscript(correctedNormalizedText, 'user');
-        onTranscript('user', correctedText, true); // Send corrected text as final - THIS IS THE AUTHORITATIVE USER SOURCE
-        console.log('[LiveAvatarSDK] ✅ onTranscript callback executed successfully!');
+        
+        console.log('[LiveAvatarSDK] 🚀 CALLING onTranscript NOW...');
+        try {
+          onTranscript('user', correctedText, true); // Send corrected text as final
+          console.log('[LiveAvatarSDK] ✅ ✅ ✅ onTranscript callback executed successfully! ✅ ✅ ✅');
+        } catch (error) {
+          console.error('[LiveAvatarSDK] ❌ ERROR calling onTranscript:', error);
+          throw error;
+        }
+        
+        console.log('[LiveAvatarSDK] 📊 Total user messages sent to UI so far:', userMessageCount + 1);
+        console.log('[LiveAvatarSDK] ========================================');
       } else {
         console.warn('[LiveAvatarSDK] ⚠️ No onTranscript callback available');
       }
@@ -742,7 +854,15 @@ export function useLiveAvatarSDK({
         // ENHANCED DUPLICATE DETECTION:
         // 1. Check recent duplicates (within 5 seconds) - only against avatar transcripts
         if (isRecentDuplicate(normalizedText, 'avatar')) {
-          console.log('[LiveAvatarSDK] ⚠️ Duplicate transcript detected (recent history), skipping:', normalizedText.substring(0, 50));
+          console.warn('[LiveAvatarSDK] ⚠️ Duplicate AVATAR transcript detected (recent history), skipping:', normalizedText.substring(0, 50));
+          console.warn('[LiveAvatarSDK] 🔍 This means the avatar is REPEATING the same response!');
+          console.warn('[LiveAvatarSDK] 🔍 Recent avatar transcripts:', 
+            recentTranscriptsRef.current.filter(t => t.speaker === 'avatar').map(t => ({ 
+              text: t.text.substring(0, 30), 
+              timeAgo: `${((Date.now() - t.time) / 1000).toFixed(1)}s ago` 
+            }))
+          );
+          console.warn('[LiveAvatarSDK] 🛑 If this happens repeatedly, the avatar may be stuck in a loop');
           currentAvatarTranscriptRef.current = '';
           return;
         }
@@ -807,12 +927,23 @@ export function useLiveAvatarSDK({
     // Network quality monitoring - adjust dynamically based on connection
     session.on('session.quality_changed', (event: any) => {
       console.log('[LiveAvatarSDK] 📶 Connection quality changed:', event);
+      lastActivityTimeRef.current = Date.now(); // Update activity time
       const quality = event?.quality || event?.level;
       
       if (quality === 'poor' || quality === 'low') {
         console.warn('[LiveAvatarSDK] ⚠️ Poor connection quality - avatar may reduce bitrate');
+        console.warn('[LiveAvatarSDK] ⚠️ This may cause freezing or black screen issues');
+        // Notify user about poor connection
+        onError?.('Poor network connection detected. Avatar quality may be reduced. Please check your internet connection.');
       } else if (quality === 'excellent' || quality === 'high') {
         console.log('[LiveAvatarSDK] ✅ Excellent connection quality - maximum bitrate');
+        // Clear any previous connection warnings
+        if (error?.includes('Poor network connection')) {
+          setError(null);
+        }
+      } else if (quality === 'degraded') {
+        console.warn('[LiveAvatarSDK] ⚠️ Connection degraded - may cause issues');
+        onError?.('Network connection is degraded. You may experience interruptions.');
       }
     });
 
@@ -1059,8 +1190,45 @@ export function useLiveAvatarSDK({
         console.log('[LiveAvatarSDK] 🚀 Starting LiveAvatar SDK initialization...');
         console.log('[LiveAvatarSDK] Avatar ID:', avatarId);
 
+        // Step 0: Ensure microphone permission FIRST to avoid race condition
+        // This prevents the first-time video not showing bug where the browser
+        // permission dialog blocks video element attachment
+        console.log('[LiveAvatarSDK] 🎤 Step 0/6: Checking microphone permission...');
+        
+        try {
+          // Request microphone access early to avoid race condition with video attachment
+          // On first use, browser will show permission dialog and BLOCK here
+          // This ensures video element attachment happens AFTER permission is granted
+          const testStream = await navigator.mediaDevices.getUserMedia({ 
+            audio: true 
+          });
+          console.log('[LiveAvatarSDK] ✅ Microphone permission confirmed');
+          
+          // Stop the test stream immediately - we just needed to ensure permission
+          testStream.getTracks().forEach(track => track.stop());
+          
+          // Small delay to let browser settle after permission grant
+          // This gives the browser time to fully process the permission state
+          await new Promise(resolve => setTimeout(resolve, 150));
+          
+          console.log('[LiveAvatarSDK] ✅ Ready to proceed with SDK initialization');
+        } catch (permError: any) {
+          const errorMsg = permError?.message?.includes('denied') || permError?.name === 'NotAllowedError'
+            ? 'Microphone permission denied. Please click the microphone icon in your browser\'s address bar and allow access, then try again.'
+            : 'Could not access microphone. Please check your microphone is connected and browser has permission to use it.';
+          
+          console.error('[LiveAvatarSDK] ❌ Microphone permission error:', {
+            error: permError,
+            name: permError?.name,
+            message: permError?.message,
+          });
+          
+          onError?.(errorMsg);
+          throw new Error(errorMsg);
+        }
+
         // Step 1: Get session token from our backend
-        console.log('[LiveAvatarSDK] 📡 Step 1/5: Requesting session token from backend...');
+        console.log('[LiveAvatarSDK] 📡 Step 1/6: Requesting session token from backend...');
         
         // Build voice config with dynamic rate variation for natural speech
         const voiceConfig = {
@@ -1167,7 +1335,44 @@ export function useLiveAvatarSDK({
         }
 
         const responseData = await tokenResponse.json();
-        const { sessionToken, sessionId } = responseData;
+        const { sessionToken, sessionId, expiresAt } = responseData;
+        const contextAttached = responseData.contextAttached ?? responseData.contextApplied ?? true;
+        const contextSynced = responseData.contextSynced ?? null;
+        console.log(
+          '[LiveAvatarSDK] 📋 Backend context status:',
+          {
+            attached: contextAttached ? 'yes' : 'no',
+            synced: contextSynced === null ? 'unknown' : contextSynced ? 'yes' : 'no',
+          }
+        );
+        
+        // Track session expiration time
+        if (expiresAt) {
+          try {
+            sessionExpirationTimeRef.current = new Date(expiresAt).getTime();
+            const expiresInMs = sessionExpirationTimeRef.current - Date.now();
+            console.log(`[LiveAvatarSDK] 📅 Session expires in ${Math.round(expiresInMs / 1000 / 60)} minutes`);
+            
+            // Warn user 2 minutes before expiration
+            if (expiresInMs > 120000) {
+              setTimeout(() => {
+                console.warn('[LiveAvatarSDK] ⚠️ Session will expire in 2 minutes');
+                onError?.('Session will expire soon. Please save your work.');
+              }, expiresInMs - 120000);
+            }
+            
+            // Force cleanup at expiration
+            setTimeout(() => {
+              console.error('[LiveAvatarSDK] ❌ Session expired!');
+              onError?.('Session has expired. Please refresh the page to start a new session.');
+              cleanup();
+            }, expiresInMs);
+          } catch (err) {
+            console.warn('[LiveAvatarSDK] ⚠️ Could not parse session expiration time:', err);
+          }
+        } else {
+          console.warn('[LiveAvatarSDK] ⚠️ No session expiration time received');
+        }
         
         if (cancelled) return;
 
@@ -1190,7 +1395,7 @@ export function useLiveAvatarSDK({
         });
 
         // Step 2: Import and initialize LiveAvatar SDK
-        console.log('[LiveAvatarSDK] 📦 Step 2/5: Loading LiveAvatar SDK module...');
+        console.log('[LiveAvatarSDK] 📦 Step 2/6: Loading LiveAvatar SDK module...');
         const { LiveAvatarSession } = await import('@heygen/liveavatar-web-sdk');
 
         if (cancelled) return;
@@ -1198,7 +1403,7 @@ export function useLiveAvatarSDK({
         console.log('[LiveAvatarSDK] ✅ SDK module loaded successfully');
 
         // Step 3: Create session with token
-        console.log('[LiveAvatarSDK] 🎭 Step 3/5: Creating LiveAvatar session...');
+        console.log('[LiveAvatarSDK] 🎭 Step 3/6: Creating LiveAvatar session...');
         console.log('[LiveAvatarSDK] Creating session with access token:', { 
           hasToken: !!sessionToken,
           tokenPreview: sessionToken?.substring(0, 20) + '...',
@@ -1213,10 +1418,36 @@ export function useLiveAvatarSDK({
         sessionRef.current = session;
 
         // Attach video element immediately if we already have one
+        // CRITICAL: Attach video AFTER session creation but BEFORE starting
         const initialVideoElement = videoElementRef.current || videoElement;
         if (initialVideoElement) {
           try {
-            session.attach(initialVideoElement);
+            console.log('[LiveAvatarSDK] 📺 Attaching video element BEFORE session start...');
+            const attachResult = session.attach(initialVideoElement);
+            console.log('[LiveAvatarSDK] ✅ Video attach() called, result:', attachResult);
+            
+            // ENHANCED: Wait a bit and verify srcObject is set
+            await new Promise<void>((resolve) => {
+              let checkCount = 0;
+              const maxChecks = 10; // 5 seconds total
+              
+              const checkSrcObject = () => {
+                checkCount++;
+                if (initialVideoElement.srcObject) {
+                  console.log('[LiveAvatarSDK] ✅ srcObject confirmed (initial attach, check', checkCount, ')');
+                  resolve();
+                } else if (checkCount < maxChecks) {
+                  console.log('[LiveAvatarSDK] ⏳ Waiting for srcObject (check', checkCount, '/', maxChecks, ')...');
+                  setTimeout(checkSrcObject, 500);
+                } else {
+                  console.warn('[LiveAvatarSDK] ⚠️ srcObject not set after', maxChecks, 'checks - continuing anyway');
+                  resolve(); // Don't block initialization
+                }
+              };
+              
+              // Start checking immediately
+              setTimeout(checkSrcObject, 100);
+            });
             
             // Set up Web Audio API for precise audio control
             try {
@@ -1286,13 +1517,16 @@ export function useLiveAvatarSDK({
         if (cancelled) return;
 
         // Step 4: Set up event listeners BEFORE starting
-        console.log('[LiveAvatarSDK] 📡 Step 4/5: Setting up event listeners...');
+        console.log('[LiveAvatarSDK] 📡 Step 4/6: Setting up event listeners...');
         setupEventListeners(session);
 
         // Step 4.5: Start session via API first (if contextId provided)
         // The SDK's internal start() call might need the session to be started via API first
         if (contextId) {
-          console.log('[LiveAvatarSDK] 🔄 Step 4.5/5: Starting session via API...');
+          if (!contextAttached) {
+            console.warn('[LiveAvatarSDK] ⚠️ Backend skipped context_id attachment - skipping manual session start');
+          } else {
+            console.log('[LiveAvatarSDK] 🔄 Step 4.5/5: Starting session via API...');
           try {
             const startResponse = await fetch('/api/session/start', {
               method: 'POST',
@@ -1319,10 +1553,11 @@ export function useLiveAvatarSDK({
             console.warn('[LiveAvatarSDK] ⚠️ API start error (non-critical):', apiStartError);
             // Don't throw - SDK might handle starting itself
           }
+          }
         }
 
         // Step 5: Start the session via SDK
-        console.log('[LiveAvatarSDK] ▶️ Step 5/5: Starting session via SDK...');
+        console.log('[LiveAvatarSDK] ▶️ Step 5/6: Starting session via SDK...');
         console.log('[LiveAvatarSDK] Session object:', {
           hasStart: typeof session.start === 'function',
           sessionType: typeof session,
@@ -1354,8 +1589,8 @@ export function useLiveAvatarSDK({
 
         if (cancelled) return;
 
-        // Start voice chat
-        console.log('[LiveAvatarSDK] 🎤 Starting voice chat...');
+        // Step 6: Start voice chat
+        console.log('[LiveAvatarSDK] 🎤 Step 6/6: Starting voice chat...');
         try {
           const voiceChat = session.voiceChat;
           if (!voiceChat) {
@@ -1382,6 +1617,85 @@ export function useLiveAvatarSDK({
         setIsConnected(true);
         setError(null);
         onStatus?.('idle');
+        lastActivityTimeRef.current = Date.now(); // Track initial activity
+        
+        // Start session keepalive to prevent timeout
+        // Send periodic pings to keep the session alive
+        console.log('[LiveAvatarSDK] 🔄 Starting session keepalive (every 30 seconds)...');
+        sessionKeepaliveIntervalRef.current = setInterval(() => {
+          if (sessionRef.current && isConnected) {
+            try {
+              // Send a lightweight ping to keep session alive
+              // @ts-ignore - accessing internal room
+              const room = sessionRef.current.room || sessionRef.current.livekitRoom;
+              if (room && room.localParticipant) {
+                const pingData = JSON.stringify({ type: 'ping', timestamp: Date.now() });
+                const data = new TextEncoder().encode(pingData);
+                room.localParticipant.publishData(data, { reliable: false }).catch((err: any) => {
+                  console.warn('[LiveAvatarSDK] ⚠️ Keepalive ping failed:', err);
+                });
+                console.log('[LiveAvatarSDK] 💓 Keepalive ping sent');
+                lastActivityTimeRef.current = Date.now();
+              }
+            } catch (err) {
+              console.warn('[LiveAvatarSDK] ⚠️ Could not send keepalive ping:', err);
+            }
+          }
+        }, 30000); // Ping every 30 seconds
+        
+        // Start connection health monitor
+        console.log('[LiveAvatarSDK] 🏥 Starting connection health monitor (every 10 seconds)...');
+        connectionHealthIntervalRef.current = setInterval(() => {
+          const now = Date.now();
+          const timeSinceActivity = now - lastActivityTimeRef.current;
+          
+          // If no activity for 45 seconds, connection might be dead
+          if (timeSinceActivity > 45000) {
+            console.error('[LiveAvatarSDK] 🚨 No activity for 45+ seconds - connection may be dead!');
+            console.error('[LiveAvatarSDK] Last activity:', new Date(lastActivityTimeRef.current).toLocaleTimeString());
+            
+            // Try to check actual connection state
+            // @ts-ignore
+            const room = sessionRef.current?.room || sessionRef.current?.livekitRoom;
+            if (room) {
+              console.log('[LiveAvatarSDK] 🔍 Checking LiveKit room state:', room.state);
+              
+              if (room.state === 'disconnected' || room.state === 'closed') {
+                console.error('[LiveAvatarSDK] ❌ LiveKit room is disconnected/closed!');
+                onError?.('Connection lost. Attempting to reconnect...');
+                setIsConnected(false);
+                
+                // Try to reconnect
+                if (reconnectAttemptsRef.current < 3) {
+                  reconnectAttemptsRef.current++;
+                  console.log(`[LiveAvatarSDK] 🔄 Attempting reconnection (${reconnectAttemptsRef.current}/3)...`);
+                  
+                  sessionRef.current?.start().then(() => {
+                    console.log('[LiveAvatarSDK] ✅ Reconnection successful!');
+                    setIsConnected(true);
+                    setError(null);
+                    lastActivityTimeRef.current = Date.now();
+                  }).catch((err) => {
+                    console.error('[LiveAvatarSDK] ❌ Reconnection failed:', err);
+                    onError?.(`Reconnection attempt ${reconnectAttemptsRef.current} failed. Please refresh the page.`);
+                  });
+                }
+              }
+            }
+          }
+          
+          // Check session expiration
+          if (sessionExpirationTimeRef.current > 0) {
+            const timeUntilExpiration = sessionExpirationTimeRef.current - now;
+            if (timeUntilExpiration < 0) {
+              console.error('[LiveAvatarSDK] ❌ Session has expired!');
+              onError?.('Session has expired. Please refresh the page.');
+              cleanup();
+            } else if (timeUntilExpiration < 60000) {
+              console.warn(`[LiveAvatarSDK] ⚠️ Session expiring in ${Math.round(timeUntilExpiration / 1000)} seconds`);
+            }
+          }
+        }, 10000); // Check every 10 seconds
 
       } catch (err) {
         if (cancelled) return;
@@ -1537,7 +1851,7 @@ export function useLiveAvatarSDK({
     };
   }, [isConnected, isSpeaking, forceStopAvatar, resetConversationState]);
 
-  // Track latest video element and attach whenever it changes
+    // Track latest video element and attach whenever it changes
   useEffect(() => {
     videoElementRef.current = videoElement ?? null;
 
@@ -1553,10 +1867,53 @@ export function useLiveAvatarSDK({
     console.log('[LiveAvatarSDK] 📺 Attaching video element (change detected)...', {
       hasSession: !!sessionRef.current,
       isConnected,
+      hasSrcObject: !!videoElement.srcObject,
+      videoReadyState: videoElement.readyState,
     });
 
     try {
-      sessionRef.current.attach(videoElement);
+      // CRITICAL: Always call attach, even if already attached
+      // The SDK might need to re-attach or the stream might not be set yet
+      console.log('[LiveAvatarSDK] 🔄 Calling session.attach()...');
+      
+      // CRITICAL FIX: Wrap attach in try-catch and wait a bit for srcObject
+      const attachResult = sessionRef.current.attach(videoElement);
+      console.log('[LiveAvatarSDK] ✅ session.attach() called, result:', attachResult);
+      
+      // ENHANCED: Check multiple times for srcObject with increasing intervals
+      let checkCount = 0;
+      const maxChecks = 10; // Check up to 10 times over 5 seconds
+      
+      const checkSrcObject = () => {
+        checkCount++;
+        if (videoElement.srcObject) {
+          console.log('[LiveAvatarSDK] ✅ srcObject detected after attach (check', checkCount, '):', {
+            isMediaStream: videoElement.srcObject instanceof MediaStream,
+            hasTracks: videoElement.srcObject instanceof MediaStream ? videoElement.srcObject.getTracks().length : 0,
+          });
+          return true;
+        }
+        
+        if (checkCount < maxChecks) {
+          console.log('[LiveAvatarSDK] ⏳ No srcObject yet, checking again (', checkCount, '/', maxChecks, ')...');
+          setTimeout(checkSrcObject, 500); // Check every 500ms
+        } else {
+          console.warn('[LiveAvatarSDK] ⚠️ srcObject not set after', maxChecks, 'checks (5 seconds)');
+          console.warn('[LiveAvatarSDK] 📊 Session state:', {
+            hasSession: !!sessionRef.current,
+            isConnected,
+            videoReadyState: videoElement.readyState,
+            videoHasSrc: !!videoElement.src,
+            videoHasSrcObject: !!videoElement.srcObject,
+          });
+          console.log('[LiveAvatarSDK] ℹ️ This is normal if video initializes slowly - will continue monitoring');
+          // Don't throw error - let the component's own timeout handle it
+        }
+        return false;
+      };
+      
+      // Start checking after a brief delay
+      setTimeout(checkSrcObject, 500);
       
       // Set up Web Audio API for precise audio control (optional enhancement)
       try {
@@ -1666,25 +2023,123 @@ export function useLiveAvatarSDK({
         const video = videoElementRef.current;
         const currentTime = video.currentTime;
         const lastTime = lastVideoTimeRef.current;
+        const now = Date.now();
         
-        // Check 1: Detect repeating video segments (stuck in a loop)
-        // This happens when the video time jumps backwards significantly
+        // Track if video has ever been in a good state (readyState >= 2)
+        if (video.readyState >= 2) {
+          if (!videoInitializedRef.current) {
+            console.log('[LiveAvatarSDK] ✅ Video initialized successfully (readyState:', video.readyState, ')');
+            videoInitializedRef.current = true;
+          }
+          lastGoodVideoStateTimeRef.current = now;
+        }
+        
+        // Check 1: Video stream health (only if video was previously working)
+        if (video.srcObject instanceof MediaStream && videoInitializedRef.current) {
+          const stream = video.srcObject;
+          const videoTracks = stream.getVideoTracks();
+          const audioTracks = stream.getAudioTracks();
+          
+          // Check if tracks are active
+          const hasActiveVideo = videoTracks.some(track => track.readyState === 'live' && track.enabled);
+          const hasActiveAudio = audioTracks.some(track => track.readyState === 'live' && track.enabled);
+          
+          // Only report errors if video was working before (avoid startup false alarms)
+          if (!hasActiveVideo && (now - lastGoodVideoStateTimeRef.current > 5000)) {
+            console.error('[LiveAvatarSDK] ❌ Video track is not active!');
+            console.error('[LiveAvatarSDK] Video tracks:', videoTracks.map(t => ({
+              id: t.id,
+              label: t.label,
+              readyState: t.readyState,
+              enabled: t.enabled,
+              muted: t.muted
+            })));
+            onError?.('Video stream lost. The avatar display has stopped working.');
+          }
+          
+          if (!hasActiveAudio && (now - lastGoodVideoStateTimeRef.current > 5000)) {
+            console.warn('[LiveAvatarSDK] ⚠️ Audio track is not active (this may be normal during initialization)');
+            // Don't show error for audio immediately - it's less critical than video
+          }
+          
+          // Check for ended tracks (stream died)
+          const endedVideoTrack = videoTracks.find(track => track.readyState === 'ended');
+          const endedAudioTrack = audioTracks.find(track => track.readyState === 'ended');
+          
+          if (endedVideoTrack || endedAudioTrack) {
+            console.error('[LiveAvatarSDK] 🚨 Media track ended unexpectedly!');
+            console.error('[LiveAvatarSDK] This indicates the stream has died');
+            onError?.('Media stream ended. Please refresh the page to reconnect.');
+            
+            // Try to reconnect once
+            if (reconnectAttemptsRef.current < 1) {
+              reconnectAttemptsRef.current++;
+              console.log('[LiveAvatarSDK] 🔄 Attempting to recover from stream end...');
+              
+              // Try to reattach video element
+              if (sessionRef.current) {
+                try {
+                  sessionRef.current.attach(video);
+                  console.log('[LiveAvatarSDK] ✅ Video element reattached');
+                  lastActivityTimeRef.current = now;
+                } catch (err) {
+                  console.error('[LiveAvatarSDK] ❌ Failed to reattach video:', err);
+                }
+              }
+            }
+          }
+        }
+        
+        // Check 2: Detect repeating video segments (stuck in a loop)
         if (avatarSpeakingRef.current && currentTime < lastTime && lastTime - currentTime > 0.5) {
           console.warn('[LiveAvatarSDK] ⚠️ Video appears to be looping/repeating - forcing stop');
           forceStopAvatar();
         }
         
-        // Check 2: If video has been speaking for too long at the same time position (stuck animation)
-        const speakingDuration = avatarSpeakingRef.current ? Date.now() - speakingStartTimeRef.current : 0;
+        // Check 3: Video frozen at same position for too long (only during speaking)
+        const speakingDuration = avatarSpeakingRef.current ? now - speakingStartTimeRef.current : 0;
         if (avatarSpeakingRef.current && currentTime === lastTime && speakingDuration > 10000) {
           console.warn('[LiveAvatarSDK] ⚠️ Video stuck at same position for 10+ seconds - forcing stop');
           forceStopAvatar();
         }
         
-        // Don't do aggressive recovery on every freeze - causes visible stuttering
-        // Only track time for checks above
+        // Check 4: Video element paused unexpectedly (only if previously playing)
+        if (video.paused && video.readyState >= 2 && videoInitializedRef.current) {
+          console.warn('[LiveAvatarSDK] ⚠️ Video unexpectedly paused, attempting to resume...');
+          video.play().catch((err) => {
+            console.error('[LiveAvatarSDK] ❌ Failed to resume video:', err);
+            onError?.('Video playback stopped. Please check your browser settings.');
+          });
+        }
+        
+        // Check 5: No video data for extended period (black screen)
+        // CRITICAL FIX: Only report as error if:
+        // 1. Video was previously initialized (not during startup)
+        // 2. Been in bad state for more than 15 seconds (not transient)
+        if ((video.readyState === 0 || video.readyState === 1) && videoInitializedRef.current) {
+          const timeSinceGoodState = now - lastGoodVideoStateTimeRef.current;
+          
+          // Only log error if stuck in bad state for 15+ seconds
+          if (timeSinceGoodState > 15000) {
+            console.error('[LiveAvatarSDK] ❌ Video has no data for 15+ seconds! ReadyState:', video.readyState);
+            console.error('[LiveAvatarSDK] This indicates the stream has stopped or connection is lost');
+            
+            // Only show user error after 30 seconds (to avoid false alarms)
+            if (timeSinceGoodState > 30000) {
+              console.error('[LiveAvatarSDK] 🚨 No video data for 30+ seconds - connection is dead!');
+              onError?.('Video stream lost. Please refresh the page to reconnect.');
+            }
+          }
+        }
+        
+        // Update last known time
         lastVideoTimeRef.current = currentTime;
-      }, 3000); // Check every 3 seconds (less frequent to avoid stuttering)
+        
+        // Update activity time if video is progressing or in good state
+        if ((currentTime !== lastTime && video.readyState >= 2) || video.readyState >= 3) {
+          lastActivityTimeRef.current = now;
+        }
+      }, 3000); // Check every 3 seconds
       
     } catch (attachError) {
       console.warn('[LiveAvatarSDK] ⚠️ Error attaching video element on change (non-critical):', attachError);
@@ -1720,6 +2175,20 @@ export function useLiveAvatarSDK({
 
   // Cleanup function
   const cleanup = useCallback(() => {
+    // Mark this as an intentional disconnection (user clicked "End Session")
+    // Set this FIRST before anything else to ensure it's captured
+    intentionalDisconnectRef.current = true;
+    console.log('[LiveAvatarSDK] 🛑 Cleanup initiated - intentional disconnect flag SET to TRUE');
+    console.log('[LiveAvatarSDK] 🔍 Flag value:', intentionalDisconnectRef.current);
+    
+    // Small delay to ensure flag is set before session state changes
+    // This prevents race condition where state change fires before flag is set
+    const cleanupAsync = async () => {
+      // Wait a tiny bit to ensure flag is read by any pending state change events
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
+      console.log('[LiveAvatarSDK] 🧹 Starting cleanup process...');
+    
     // Clear all timers first
     if (maxSpeakingDurationTimerRef.current) {
       clearTimeout(maxSpeakingDurationTimerRef.current);
@@ -1741,6 +2210,18 @@ export function useLiveAvatarSDK({
       videoHealthCheckIntervalRef.current = null;
     }
     
+    if (sessionKeepaliveIntervalRef.current) {
+      clearInterval(sessionKeepaliveIntervalRef.current);
+      sessionKeepaliveIntervalRef.current = null;
+      console.log('[LiveAvatarSDK] 🛑 Session keepalive stopped');
+    }
+    
+    if (connectionHealthIntervalRef.current) {
+      clearInterval(connectionHealthIntervalRef.current);
+      connectionHealthIntervalRef.current = null;
+      console.log('[LiveAvatarSDK] 🛑 Connection health monitor stopped');
+    }
+    
     // Clear all tracking state
     currentAvatarTranscriptRef.current = '';
     currentResponseRef.current = '';
@@ -1749,6 +2230,12 @@ export function useLiveAvatarSDK({
     recentTranscriptsRef.current = [];
     lastVideoTimeRef.current = 0;
     lastVideoFrameRef.current = 0;
+    lastActivityTimeRef.current = 0;
+    sessionExpirationTimeRef.current = 0;
+    reconnectAttemptsRef.current = 0;
+    videoInitializedRef.current = false;
+    lastGoodVideoStateTimeRef.current = Date.now();
+    intentionalDisconnectRef.current = false; // Reset for next session
     
     // Clean up Web Audio API resources
     if (audioSourceRef.current) {
@@ -1818,6 +2305,14 @@ export function useLiveAvatarSDK({
     }
     setIsInitialized(false);
     setIsConnected(false);
+    
+      console.log('[LiveAvatarSDK] ✅ Cleanup process complete');
+    };
+    
+    // Run async cleanup
+    cleanupAsync().catch((err) => {
+      console.error('[LiveAvatarSDK] Error in cleanup:', err);
+    });
   }, []);
 
   // Calculate natural response delay based on message complexity

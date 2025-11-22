@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Setup Test - LiveAvatar</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+        }
+        .test-section {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .test-section h2 {
+            margin-top: 0;
+            color: #764ba2;
+            font-size: 18px;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: transform 0.2s;
+        }
+        button:hover {
+            transform: scale(1.05);
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .result {
+            margin-top: 15px;
+            padding: 15px;
+            border-radius: 8px;
+            font-weight: 500;
+        }
+        .success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+        .warning {
+            background: #fff3cd;
+            border: 1px solid #ffeeba;
+            color: #856404;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .status-success {
+            background: #28a745;
+        }
+        .status-error {
+            background: #dc3545;
+        }
+        .status-pending {
+            background: #ffc107;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Audio Setup Test</h1>
+        <p class="subtitle">Test your microphone and speakers before using LiveAvatar (saves credits!)</p>
+
+        <div class="test-section">
+            <h2>Test 1: Microphone Permission</h2>
+            <p>Check if your browser can access your microphone.</p>
+            <button onclick="testMicrophone()">🎤 Test Microphone</button>
+            <div id="mic-result"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>Test 2: Microphone Recording</h2>
+            <p>Record a short audio clip to verify your microphone works.</p>
+            <button onclick="startRecording()" id="record-btn">🔴 Start Recording</button>
+            <button onclick="stopRecording()" id="stop-btn" disabled>⏹️ Stop Recording</button>
+            <button onclick="playRecording()" id="play-btn" disabled>▶️ Play Back</button>
+            <div id="record-result"></div>
+            <audio id="playback-audio" style="width: 100%; margin-top: 10px; display: none;"></audio>
+        </div>
+
+        <div class="test-section">
+            <h2>Test 3: Speaker/Headphone Test</h2>
+            <p>Play a test sound to verify your speakers/headphones work.</p>
+            <button onclick="testSpeakers()">🔊 Test Speakers</button>
+            <div id="speaker-result"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>Test 4: System Check</h2>
+            <p>Check for common issues that might prevent audio from working.</p>
+            <button onclick="systemCheck()">🔍 Run System Check</button>
+            <div id="system-result"></div>
+        </div>
+
+        <div id="final-result" style="margin-top: 30px;"></div>
+    </div>
+
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let audioBlob;
+
+        async function testMicrophone() {
+            const resultDiv = document.getElementById('mic-result');
+            resultDiv.innerHTML = '<div class="result info">🔄 Requesting microphone permission...</div>';
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // Success - stop the stream
+                stream.getTracks().forEach(track => track.stop());
+                
+                resultDiv.innerHTML = `
+                    <div class="result success">
+                        <span class="status-indicator status-success"></span>
+                        ✅ Microphone permission granted! Your browser can access the microphone.
+                    </div>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <span class="status-indicator status-error"></span>
+                        ❌ Microphone access denied!<br>
+                        <strong>Error:</strong> ${error.message}<br>
+                        <strong>Fix:</strong> Click the 🎤 icon in your browser's address bar and allow microphone access.
+                    </div>
+                `;
+            }
+        }
+
+        async function startRecording() {
+            const resultDiv = document.getElementById('record-result');
+            const recordBtn = document.getElementById('record-btn');
+            const stopBtn = document.getElementById('stop-btn');
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    audioChunks.push(event.data);
+                };
+                
+                mediaRecorder.onstop = () => {
+                    audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    const audio = document.getElementById('playback-audio');
+                    audio.src = audioUrl;
+                    audio.style.display = 'block';
+                    
+                    document.getElementById('play-btn').disabled = false;
+                    
+                    resultDiv.innerHTML = `
+                        <div class="result success">
+                            <span class="status-indicator status-success"></span>
+                            ✅ Recording saved! Click "Play Back" to hear it.
+                        </div>
+                    `;
+                };
+                
+                mediaRecorder.start();
+                recordBtn.disabled = true;
+                stopBtn.disabled = false;
+                
+                resultDiv.innerHTML = `
+                    <div class="result info">
+                        <span class="status-indicator status-pending"></span>
+                        🔴 Recording... Speak now! (Say "Testing 1, 2, 3")
+                    </div>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <span class="status-indicator status-error"></span>
+                        ❌ Failed to start recording: ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                
+                document.getElementById('record-btn').disabled = false;
+                document.getElementById('stop-btn').disabled = true;
+            }
+        }
+
+        function playRecording() {
+            const audio = document.getElementById('playback-audio');
+            const resultDiv = document.getElementById('record-result');
+            
+            audio.play();
+            
+            resultDiv.innerHTML = `
+                <div class="result info">
+                    <span class="status-indicator status-pending"></span>
+                    🔊 Playing back... Can you hear yourself?
+                </div>
+            `;
+            
+            audio.onended = () => {
+                resultDiv.innerHTML = `
+                    <div class="result warning">
+                        <span class="status-indicator status-pending"></span>
+                        ❓ Did you hear your voice clearly?<br>
+                        If YES: Your audio setup is working! ✅<br>
+                        If NO: Check your speaker/headphone settings. ⚠️
+                    </div>
+                `;
+            };
+        }
+
+        function testSpeakers() {
+            const resultDiv = document.getElementById('speaker-result');
+            
+            // Create audio context and play a beep
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.value = 440; // A4 note
+            oscillator.type = 'sine';
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + 1);
+            
+            resultDiv.innerHTML = `
+                <div class="result info">
+                    <span class="status-indicator status-pending"></span>
+                    🔊 Playing test tone...<br>
+                    Did you hear a beep sound?<br>
+                    If YES: Your speakers/headphones work! ✅<br>
+                    If NO: Check volume and output device. ⚠️
+                </div>
+            `;
+        }
+
+        async function systemCheck() {
+            const resultDiv = document.getElementById('system-result');
+            const checks = [];
+            
+            // Check 1: MediaDevices API available
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                checks.push({ name: 'MediaDevices API', status: 'success', message: 'Available' });
+            } else {
+                checks.push({ name: 'MediaDevices API', status: 'error', message: 'Not available - Browser not supported' });
+            }
+            
+            // Check 2: HTTPS or localhost
+            if (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+                checks.push({ name: 'Secure Context', status: 'success', message: 'Running on HTTPS or localhost' });
+            } else {
+                checks.push({ name: 'Secure Context', status: 'error', message: 'Must use HTTPS for microphone access' });
+            }
+            
+            // Check 3: Audio Context
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                checks.push({ name: 'Audio Context', status: 'success', message: 'Web Audio API supported' });
+                audioContext.close();
+            } catch (error) {
+                checks.push({ name: 'Audio Context', status: 'error', message: 'Web Audio API not supported' });
+            }
+            
+            // Check 4: Enumerate devices
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const audioInputs = devices.filter(d => d.kind === 'audioinput');
+                const audioOutputs = devices.filter(d => d.kind === 'audiooutput');
+                
+                if (audioInputs.length > 0) {
+                    checks.push({ name: 'Microphone Devices', status: 'success', message: `${audioInputs.length} device(s) found` });
+                } else {
+                    checks.push({ name: 'Microphone Devices', status: 'error', message: 'No microphones detected' });
+                }
+                
+                if (audioOutputs.length > 0) {
+                    checks.push({ name: 'Speaker Devices', status: 'success', message: `${audioOutputs.length} device(s) found` });
+                } else {
+                    checks.push({ name: 'Speaker Devices', status: 'warning', message: 'No speakers detected (may be browser limitation)' });
+                }
+            } catch (error) {
+                checks.push({ name: 'Device Enumeration', status: 'error', message: error.message });
+            }
+            
+            // Display results
+            let html = '<div class="result">';
+            checks.forEach(check => {
+                const statusClass = check.status === 'success' ? 'status-success' : 'status-error';
+                const icon = check.status === 'success' ? '✅' : '❌';
+                html += `
+                    <div style="margin: 10px 0;">
+                        <span class="status-indicator ${statusClass}"></span>
+                        ${icon} <strong>${check.name}:</strong> ${check.message}
+                    </div>
+                `;
+            });
+            html += '</div>';
+            
+            resultDiv.innerHTML = html;
+            
+            // Final verdict
+            const allSuccess = checks.every(c => c.status === 'success');
+            const finalDiv = document.getElementById('final-result');
+            
+            if (allSuccess) {
+                finalDiv.innerHTML = `
+                    <div class="result success" style="font-size: 18px; text-align: center; padding: 20px;">
+                        <h2 style="margin: 0 0 10px 0; color: #28a745;">🎉 All Systems Ready!</h2>
+                        <p style="margin: 0;">Your audio setup is working correctly. You're ready to use LiveAvatar without wasting credits!</p>
+                    </div>
+                `;
+            } else {
+                finalDiv.innerHTML = `
+                    <div class="result warning" style="font-size: 18px; text-align: center; padding: 20px;">
+                        <h2 style="margin: 0 0 10px 0; color: #856404;">⚠️ Issues Detected</h2>
+                        <p style="margin: 0;">Please fix the errors above before using LiveAvatar to avoid wasting credits.</p>
+                    </div>
+                `;
+            }
+        }
+    </script>
+</body>
+</html>
+
+

@@ -11,8 +11,8 @@ However, **the avatar is still saying "How can I help you?"** which means the **
 ## What Needs to Be Fixed
 
 ### Context IDs in Use:
-- **Sarah (Widow)**: `1803fa71-78fa-4814-b171-3887ee48f50f`
-- **Michael (Son)**: `7f393a67-ca66-4f69-a3aa-e0c3f4ca083a`
+- **Sarah (Widow)**: `d7c15ce9-4359-4790-bf1b-8a786a958289`
+- **Michael (Son)**: `c77340be-22b0-4927-b5ab-fa88455124f7`
 
 ### The Problem:
 The contexts are configured as **"helpful assistant"** or **"service provider"** personas.
@@ -31,8 +31,8 @@ Go to: https://app.liveavatar.com (or your LiveAvatar dashboard URL)
 Navigate to:
 - Contexts or Knowledge Base section
 - Find contexts with IDs:
-  - `1803fa71-78fa-4814-b171-3887ee48f50f` (Sarah)
-  - `7f393a67-ca66-4f69-a3aa-e0c3f4ca083a` (Michael)
+  - `d7c15ce9-4359-4790-bf1b-8a786a958289` (Sarah)
+  - `c77340be-22b0-4927-b5ab-fa88455124f7` (Michael)
 
 ### Step 3: Edit Each Context
 
@@ -199,8 +199,8 @@ Replace the context IDs in your code:
 
 ```typescript
 // OLD IDs (if they can't be fixed):
-const WIDOW_CONTEXT_ID = '1803fa71-78fa-4814-b171-3887ee48f50f';
-const SON_CONTEXT_ID = '7f393a67-ca66-4f69-a3aa-e0c3f4ca083a';
+const WIDOW_CONTEXT_ID = 'd7c15ce9-4359-4790-bf1b-8a786a958289';
+const SON_CONTEXT_ID = 'c77340be-22b0-4927-b5ab-fa88455124f7';
 
 // NEW IDs (from your new contexts):
 const WIDOW_CONTEXT_ID = 'YOUR_NEW_SARAH_CONTEXT_ID';

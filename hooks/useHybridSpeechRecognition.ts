@@ -117,36 +117,53 @@ export function useHybridSpeechRecognition({
       preferDeepgram,
     });
     
+    let newProvider: 'deepgram' | 'browser' | 'none';
+    let statusMessage: string | undefined;
+    let errorMessage: string | undefined;
+    
     if (!enabled) {
       console.log('[HybridSpeech] ⚠️ Speech recognition not enabled');
-      setActiveProvider('none');
-      return;
-    }
-
-    if (useDeepgram && deepgram.isSupported) {
+      newProvider = 'none';
+    } else if (useDeepgram && deepgram.isSupported) {
       console.log('[HybridSpeech] ✅ Using Deepgram Flux');
-      setActiveProvider('deepgram');
-      onStatusChange?.('Using Deepgram (high accuracy)');
+      newProvider = 'deepgram';
+      statusMessage = 'Using Deepgram (high accuracy)';
     } else if (browser.isSupported) {
       console.log('[HybridSpeech] ✅ Using browser speech recognition');
       if (useDeepgram) {
         console.warn('[HybridSpeech] ⚠️ Deepgram not supported, falling back to browser');
       }
-      setActiveProvider('browser');
-      onStatusChange?.('Using browser speech recognition');
+      newProvider = 'browser';
+      statusMessage = 'Using browser speech recognition';
     } else {
       console.error('[HybridSpeech] ❌ No speech recognition available');
-      setActiveProvider('none');
-      onStatusChange?.('Speech recognition not available');
-      onError?.('Speech recognition not supported in this browser');
+      newProvider = 'none';
+      statusMessage = 'Speech recognition not available';
+      errorMessage = 'Speech recognition not supported in this browser';
+    }
+    
+    // CRITICAL FIX: Only update state if it actually changed to prevent infinite loops
+    setActiveProvider(prev => {
+      if (prev !== newProvider) {
+        return newProvider;
+      }
+      return prev;
+    });
+    
+    // Call callbacks after state update (but only if provider changed)
+    if (statusMessage) {
+      onStatusChange?.(statusMessage);
+    }
+    if (errorMessage) {
+      onError?.(errorMessage);
     }
   }, [
     enabled,
     useDeepgram,
     deepgram.isSupported,
     browser.isSupported,
-    onStatusChange,
-    onError,
+    // REMOVED onStatusChange and onError from dependencies - they're callbacks that shouldn't trigger re-runs
+    // If they change, it's fine - we'll use the latest version via closure
   ]);
 
   // Monitor listening state

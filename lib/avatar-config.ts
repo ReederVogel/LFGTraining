@@ -85,17 +85,18 @@ export const AVATAR_CONFIG = {
   latency: {
     // Voice Activity Detection (VAD) silence duration in milliseconds
     // How long to wait for silence before considering speech ended
-    // For training scenarios, users need time to pause and think (1.2 seconds)
-    // This prevents the avatar from responding before the user finishes their thought
-    silenceDurationMs: 1200, // Increased from 500ms to allow for natural pauses and thinking
+    // CRITICAL FOR TRAINING: Users need time to give LONG, DETAILED responses with natural pauses
+    // Increased to 3.5 seconds to prevent interrupting users mid-thought
+    silenceDurationMs: 3500, // VERY patient - allows long responses with multiple pauses
     
     // Silence threshold for speech detection (0.0 - 1.0)
     // Lower = more sensitive, Higher = less sensitive
-    silenceThreshold: 0.005, // Highly sensitive for instant detection (reduced from 0.008)
+    // Using low sensitivity to only detect clear speech (not pauses/breaths)
+    silenceThreshold: 0.003, // Very sensitive - detects even soft speech
     
     // Grace period after avatar stops speaking (in milliseconds)
     // Time to catch delayed transcription events
-    transcriptGracePeriod: 600, // Faster response (reduced from 800ms)
+    transcriptGracePeriod: 800, // Generous grace period
     
     // Interruption detection settings
     // These are even more aggressive for instant interruption

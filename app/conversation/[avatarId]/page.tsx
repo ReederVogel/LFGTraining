@@ -39,9 +39,11 @@ export default function ConversationPage() {
   const [exportFormat, setExportFormat] = useState<'text' | 'json' | 'markdown'>('text');
   const [showCopySuccess, setShowCopySuccess] = useState(false);
   const [sessionStarted, setSessionStarted] = useState(false);
+  const [isAvatarConnected, setIsAvatarConnected] = useState(false);
   const [conversationTime, setConversationTime] = useState(0);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const startTimeRef = useRef<number | null>(null);
+  const accumulatedTimeRef = useRef(0);
 
   // Redirect to select page if invalid avatar
   useEffect(() => {
@@ -62,9 +64,13 @@ export default function ConversationPage() {
     timestamp: Date;
     isInterim?: boolean;
   }) => {
+    console.log('[ConversationPage] ========================================');
+    console.log('[ConversationPage] 🎯 handleTranscript CALLED');
+    console.log('[ConversationPage] ========================================');
     console.log('[ConversationPage] 📩 handleTranscript called:', {
       speaker: message.speaker,
       text: message.text.substring(0, 50) + '...',
+      textLength: message.text.length,
       isInterim: message.isInterim,
       currentTranscriptCount: transcripts.length
     });
@@ -96,58 +102,63 @@ export default function ConversationPage() {
       const isFirstUserMessage = message.speaker === 'user' && 
                                  newTranscripts.filter(m => m.speaker === 'user' && !m.isInterim).length === 0;
       
+      // NEW FIX: Time-aware duplicate detection
+      // Only block duplicates if they occur within 2 seconds of each other
+      // This prevents legitimate messages from being blocked while catching true duplicates
+      const DUPLICATE_WINDOW_MS = 2000; // 2 seconds
+      const messageTimestamp = message.timestamp?.getTime() || Date.now();
+      
       // Check if this is a duplicate or extension of the last message
       // This fixes the issue where "I'm not sure yet" is followed by "I'm not sure yet. I'd like to know..."
       // SKIP this check for the first user message to ensure it always shows
       const lastMessage = newTranscripts[newTranscripts.length - 1];
       
       if (!isFirstUserMessage && lastMessage && lastMessage.speaker === message.speaker && !lastMessage.isInterim) {
+        const timeDiff = messageTimestamp - (lastMessage.timestamp?.getTime() || 0);
         const normalize = (str: string) => str.trim().replace(/[.,!?;:]+$/, '').toLowerCase();
         const prevNorm = normalize(lastMessage.text);
         const newNorm = normalize(message.text);
         
-        // CRITICAL FIX: Check if messages are exactly the same - this is a true duplicate
-        if (prevNorm === newNorm) {
-          console.log('[ConversationPage] ⚠️ Exact duplicate detected, skipping:', newNorm.substring(0, 50));
-          return [...newTranscripts];
-        }
-        
-        // Robust Deduplication Logic:
-        // 1. New text starts with old text (extension)
-        // 2. Old text starts with new text (rare update)
-        if ((newNorm.startsWith(prevNorm) && prevNorm.length > 0) ||
-            (prevNorm.startsWith(newNorm) && newNorm.length > 0)) {
-           
-           // Use the longer message to capture the most detail
-           const longerText = message.text.length >= lastMessage.text.length ? message.text : lastMessage.text;
-           
-           // Replace the last message with the longer/newer version
-           // Keep the original timestamp to show when they started speaking
-           newTranscripts[newTranscripts.length - 1] = {
-             ...message,
-             text: longerText,
-             timestamp: lastMessage.timestamp
-           };
-           console.log('[ConversationPage] ✅ Updated message with longer version:', longerText.substring(0, 50));
-           return [...newTranscripts];
+        // ONLY check for duplicates if messages are within the duplicate window
+        if (timeDiff < DUPLICATE_WINDOW_MS) {
+          // CRITICAL FIX: Check if messages are exactly the same - this is a true duplicate
+          if (prevNorm === newNorm) {
+            console.warn('[ConversationPage] 🚨 BLOCKING - Exact duplicate within 2s window');
+            console.warn('[ConversationPage] 📊 Duplicate text:', newNorm.substring(0, 50));
+            console.warn('[ConversationPage] 📊 Time difference:', timeDiff + 'ms');
+            console.warn('[ConversationPage] ========================================');
+            return [...newTranscripts];
+          }
+          
+          // Robust Deduplication Logic:
+          // 1. New text starts with old text (extension)
+          // 2. Old text starts with new text (rare update)
+          if ((newNorm.startsWith(prevNorm) && prevNorm.length > 0) ||
+              (prevNorm.startsWith(newNorm) && newNorm.length > 0)) {
+             
+             // Use the longer message to capture the most detail
+             const longerText = message.text.length >= lastMessage.text.length ? message.text : lastMessage.text;
+             
+             // Replace the last message with the longer/newer version
+             // Keep the original timestamp to show when they started speaking
+             newTranscripts[newTranscripts.length - 1] = {
+               ...message,
+               text: longerText,
+               timestamp: lastMessage.timestamp
+             };
+             console.log('[ConversationPage] ✅ Updated message with longer version:', longerText.substring(0, 50));
+             return [...newTranscripts];
+          }
+        } else {
+          console.log('[ConversationPage] ⏰ Messages are >2s apart, treating as separate messages');
         }
       }
       
-      // ADDITIONAL CHECK: Make sure this exact text doesn't exist anywhere in recent history (last 3 messages)
-      // This catches duplicates that might have been separated by interim messages
-      // SKIP this check for the first user message to ensure it always shows
-      if (!isFirstUserMessage) {
-        const recentMessages = newTranscripts.slice(-3).filter(m => !m.isInterim && m.speaker === message.speaker);
-        const isDuplicate = recentMessages.some(m => {
-          const normalize = (str: string) => str.trim().replace(/[.,!?;:]+$/, '').toLowerCase();
-          return normalize(m.text) === normalize(message.text);
-        });
-        
-        if (isDuplicate) {
-          console.log('[ConversationPage] ⚠️ Duplicate found in recent history, skipping:', message.text.substring(0, 50));
-          return [...newTranscripts];
-        }
-      } else {
+      // REMOVED: The overly aggressive "last 3 messages" check
+      // This was blocking legitimate messages that happened to have similar text
+      // The time-aware check above is sufficient
+      
+      if (isFirstUserMessage) {
         console.log('[ConversationPage] 🎉 First user message - skipping duplicate check to ensure it displays');
       }
       
@@ -162,31 +173,60 @@ export default function ConversationPage() {
     });
   }, []);
 
-  // Timer effect - start when session starts, stop when session ends
+  // Reset timer when session fully ends
   useEffect(() => {
-    if (sessionStarted) {
-      startTimeRef.current = Date.now();
-      timerIntervalRef.current = setInterval(() => {
-        if (startTimeRef.current) {
-          const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
-          setConversationTime(elapsed);
-        }
-      }, 1000);
-    } else {
+    if (!sessionStarted) {
       if (timerIntervalRef.current) {
         clearInterval(timerIntervalRef.current);
         timerIntervalRef.current = null;
       }
       setConversationTime(0);
       startTimeRef.current = null;
+      accumulatedTimeRef.current = 0;
+    }
+  }, [sessionStarted]);
+
+  // Start timer only after avatar connection is established
+  useEffect(() => {
+    if (!sessionStarted) {
+      return;
     }
 
+    if (isAvatarConnected) {
+      if (startTimeRef.current === null) {
+        startTimeRef.current = Date.now();
+      }
+
+      if (!timerIntervalRef.current) {
+        timerIntervalRef.current = setInterval(() => {
+          if (startTimeRef.current !== null) {
+            const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
+            setConversationTime(accumulatedTimeRef.current + elapsed);
+          }
+        }, 1000);
+      }
+    } else {
+      if (startTimeRef.current !== null) {
+        const elapsedWhileConnected = Math.floor((Date.now() - startTimeRef.current) / 1000);
+        accumulatedTimeRef.current += elapsedWhileConnected;
+        startTimeRef.current = null;
+        setConversationTime(accumulatedTimeRef.current);
+      }
+
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+        timerIntervalRef.current = null;
+      }
+    }
+  }, [sessionStarted, isAvatarConnected]);
+
+  useEffect(() => {
     return () => {
       if (timerIntervalRef.current) {
         clearInterval(timerIntervalRef.current);
       }
     };
-  }, [sessionStarted]);
+  }, []);
 
   // Format time as MM:SS
   const formatTime = useCallback((seconds: number) => {
@@ -284,6 +324,7 @@ export default function ConversationPage() {
               onTranscript={handleTranscript}
               onError={setError}
               onSessionStart={setSessionStarted}
+              onConnectionChange={setIsAvatarConnected}
               conversationTime={conversationTime}
             />
           </div>
