@@ -39,6 +39,7 @@ export class LiveAvatarClient {
   // user turn.
   private hasUserEverSpoken = false;
   private hasAvatarSpokenSinceLastUser = false;
+  private userSpeakingTimeout: NodeJS.Timeout | null = null;
 
   constructor(config: {
     apiKey: string;
@@ -301,8 +302,20 @@ export class LiveAvatarClient {
       console.log("Agent event: USER_SPEAK_STARTED");
       this.isUserSpeaking = true;
       this.hasUserEverSpoken = true;
-      // New user turn starts – allow exactly one avatar response.
-      this.hasAvatarSpokenSinceLastUser = false;
+      
+      // Clear any existing timeout
+      if (this.userSpeakingTimeout) {
+        clearTimeout(this.userSpeakingTimeout);
+      }
+      
+      // Safety timeout: If USER_SPEAK_ENDED doesn't fire within 8 seconds,
+      // assume VAD got stuck and force recovery
+      this.userSpeakingTimeout = setTimeout(() => {
+        console.warn("USER_SPEAK_ENDED not received after 8s - forcing state recovery");
+        this.isUserSpeaking = false;
+        this.hasAvatarSpokenSinceLastUser = false;
+        this.userSpeakingTimeout = null;
+      }, 8000);
 
       // If the avatar is currently speaking or about to speak, interrupt so
       // the user can always take the floor without being talked over.
@@ -317,6 +330,16 @@ export class LiveAvatarClient {
     this.liveAvatarInstance.on(AgentEventsEnum.USER_SPEAK_ENDED, () => {
       console.log("Agent event: USER_SPEAK_ENDED");
       this.isUserSpeaking = false;
+      
+      // Clear the safety timeout
+      if (this.userSpeakingTimeout) {
+        clearTimeout(this.userSpeakingTimeout);
+        this.userSpeakingTimeout = null;
+      }
+      
+      // MOVED HERE: Reset after user FINISHES speaking, not when they start
+      // This allows avatar to respond after user completes their turn
+      this.hasAvatarSpokenSinceLastUser = false;
     });
 
     this.liveAvatarInstance.on(AgentEventsEnum.AVATAR_SPEAK_STARTED, () => {
@@ -442,6 +465,12 @@ export class LiveAvatarClient {
    * End the session and cleanup
    */
   async endSession(): Promise<void> {
+    // Clean up timeout
+    if (this.userSpeakingTimeout) {
+      clearTimeout(this.userSpeakingTimeout);
+      this.userSpeakingTimeout = null;
+    }
+    
     if (this.liveAvatarInstance) {
       try {
         await this.liveAvatarInstance.stop();
