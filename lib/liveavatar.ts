@@ -362,7 +362,7 @@ export class LiveAvatarClient {
       }
 
       this.isAvatarSpeaking = true;
-      this.hasAvatarSpokenSinceLastUser = true;
+      // NOTE: Don't set hasAvatarSpokenSinceLastUser here - wait until avatar finishes speaking
 
       // Extra guard: if for any reason the user is marked as speaking when
       // the avatar starts, immediately interrupt to avoid overlap.
@@ -375,6 +375,8 @@ export class LiveAvatarClient {
     this.liveAvatarInstance.on(AgentEventsEnum.AVATAR_SPEAK_ENDED, () => {
       console.log("Agent event: AVATAR_SPEAK_ENDED");
       this.isAvatarSpeaking = false;
+      // Set flag ONLY when avatar successfully completes speaking
+      this.hasAvatarSpokenSinceLastUser = true;
     });
 
     // Handle avatar transcription
