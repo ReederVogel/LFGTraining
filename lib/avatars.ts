@@ -16,6 +16,7 @@ export const avatars: Avatar[] = [
     role: "Widow",
     scenario: "Lost her husband",
     avatarId: "513fd1b7-7ef9-466d-9af2-344e51eeb833",
+    voiceId: "b9d23d16-9437-44d5-89c4-b4dd61c3fdc8",
     contextId: "d7c15ce9-4359-4790-bf1b-8a786a958289",
     imageSrc: "/avatars/sarah-avatar.jpg",
   },
