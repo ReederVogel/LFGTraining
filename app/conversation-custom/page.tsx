@@ -3,10 +3,10 @@
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { getAvatarById } from "@/lib/avatars";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, Suspense } from "react";
 import { createLiveAvatarClient, type TranscriptEvent } from "@/lib/liveavatar";
 
-export default function ConversationCustomPage() {
+function ConversationCustomContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const avatarId = searchParams.get("avatar");
@@ -432,4 +432,24 @@ export default function ConversationCustomPage() {
   );
 }
 
+export default function ConversationCustomPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen flex-col items-center justify-center p-8 bg-gradient-to-b from-gray-50 to-gray-100">
+          <div className="text-center space-y-4">
+            <h1 className="text-2xl font-bold text-gray-900">
+              Loading custom session...
+            </h1>
+            <p className="text-gray-600">
+              Preparing your avatar and custom brain.
+            </p>
+          </div>
+        </main>
+      }
+    >
+      <ConversationCustomContent />
+    </Suspense>
+  );
+}
 
