@@ -224,8 +224,8 @@ export class LiveAvatarClient {
       // The SESSION_STREAM_READY event will trigger attachment
       // Don't attach here as stream might not be ready yet
 
-      this.sessionId = this.liveAvatarInstance._sessionInfo?.session_id || null;
-      console.log("LiveAvatar session initialized:", this.sessionId);
+      // Note: sessionId is now retrieved from public methods if needed
+      console.log("LiveAvatar session initialized");
     } catch (error) {
       console.error("Error initializing LiveAvatar:", error);
       throw error;
