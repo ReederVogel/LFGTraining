@@ -25,6 +25,7 @@ export class LiveAvatarClient {
   private voiceId: string | null;
   private contextId: string | null;
   private mode: "FULL" | "CUSTOM";
+  private enforceTurnTaking: boolean;
   private videoElement: HTMLVideoElement | null = null;
   private transcriptCallback: ((event: TranscriptEvent) => void) | null = null;
   private liveAvatarInstance: LiveAvatarSession | null = null;
@@ -40,6 +41,13 @@ export class LiveAvatarClient {
   private hasUserEverSpoken = false;
   private hasAvatarSpokenSinceLastUser = false;
   private userSpeakingTimeout: NodeJS.Timeout | null = null;
+  private userFinishedSpeakingTimeout: NodeJS.Timeout | null = null;
+  private lastInterruptTime = 0;
+  private interruptCooldown = 500; // Minimum 500ms between interrupt calls
+  // Track if avatar is currently playing audio (for CUSTOM mode with OpenAI)
+  private isPlayingAudio = false;
+  // Track if avatar has been interrupted (to prevent sending more audio)
+  private isInterrupted = false;
 
   constructor(config: {
     apiKey: string;
@@ -47,12 +55,14 @@ export class LiveAvatarClient {
     voiceId?: string;
     contextId?: string;
     mode?: "FULL" | "CUSTOM";
+    enforceTurnTaking?: boolean;
   }) {
     this.apiKey = config.apiKey;
     this.avatarId = config.avatarId;
     this.voiceId = config.voiceId || null;
     this.contextId = config.contextId || null;
     this.mode = config.mode ?? "FULL";
+    this.enforceTurnTaking = config.enforceTurnTaking ?? true;
   }
 
   /**
@@ -239,21 +249,35 @@ export class LiveAvatarClient {
   private setupEventListeners(): void {
     if (!this.liveAvatarInstance) return;
 
+    // Wrap all event handlers in try-catch to prevent crashes
+    const safeHandler = <T extends any[]>(
+      eventName: string,
+      handler: (...args: T) => void
+    ) => {
+      return (...args: T) => {
+        try {
+          handler(...args);
+        } catch (error) {
+          console.error(`Error in ${eventName} handler:`, error);
+        }
+      };
+    };
+
     const voiceChat = this.liveAvatarInstance.voiceChat;
     if (voiceChat) {
-      voiceChat.on(VoiceChatEvent.STATE_CHANGED, (state) => {
+      voiceChat.on(VoiceChatEvent.STATE_CHANGED, safeHandler("VoiceChat.STATE_CHANGED", (state) => {
         console.log("Voice chat state:", state);
-      });
-      voiceChat.on(VoiceChatEvent.MUTED, () => {
+      }));
+      voiceChat.on(VoiceChatEvent.MUTED, safeHandler("VoiceChat.MUTED", () => {
         console.log("Voice chat muted");
-      });
-      voiceChat.on(VoiceChatEvent.UNMUTED, () => {
+      }));
+      voiceChat.on(VoiceChatEvent.UNMUTED, safeHandler("VoiceChat.UNMUTED", () => {
         console.log("Voice chat unmuted");
-      });
+      }));
     }
 
     // Handle stream ready event
-    this.liveAvatarInstance.on(SessionEvent.SESSION_STREAM_READY, () => {
+    this.liveAvatarInstance.on(SessionEvent.SESSION_STREAM_READY, safeHandler("SESSION_STREAM_READY", () => {
       console.log("Stream ready - attaching video");
       if (!this.videoElement || !this.liveAvatarInstance) {
         return;
@@ -293,41 +317,59 @@ export class LiveAvatarClient {
       } catch (error) {
         console.error("Error attaching video:", error);
       }
-    });
+    }));
 
     // Track speaking state to minimize avatar/user talk-over and enforce
     // strict turn-taking where the avatar never initiates or restarts
     // the conversation on its own.
-    this.liveAvatarInstance.on(AgentEventsEnum.USER_SPEAK_STARTED, () => {
+    if (this.enforceTurnTaking) {
+      this.liveAvatarInstance.on(AgentEventsEnum.USER_SPEAK_STARTED, safeHandler("USER_SPEAK_STARTED", () => {
       console.log("Agent event: USER_SPEAK_STARTED");
       this.isUserSpeaking = true;
       this.hasUserEverSpoken = true;
+      
+      // Cancel the "finished speaking" timeout if user starts speaking again
+      // This handles continuous speech with pauses
+      if (this.userFinishedSpeakingTimeout) {
+        clearTimeout(this.userFinishedSpeakingTimeout);
+        this.userFinishedSpeakingTimeout = null;
+        console.log("⏸️ User still speaking (cancelled avatar response timer)");
+      }
       
       // Clear any existing timeout
       if (this.userSpeakingTimeout) {
         clearTimeout(this.userSpeakingTimeout);
       }
       
-      // Safety timeout: If USER_SPEAK_ENDED doesn't fire within 8 seconds,
+      // Safety timeout: If USER_SPEAK_ENDED doesn't fire within 10 seconds,
       // assume VAD got stuck and force recovery
       this.userSpeakingTimeout = setTimeout(() => {
-        console.warn("USER_SPEAK_ENDED not received after 8s - forcing state recovery");
+        console.warn("USER_SPEAK_ENDED not received after 10s - forcing state recovery");
         this.isUserSpeaking = false;
         this.hasAvatarSpokenSinceLastUser = false;
         this.userSpeakingTimeout = null;
-      }, 8000);
+      }, 10000); // Increased from 8s to 10s for longer speeches
 
-      // If the avatar is currently speaking or about to speak, interrupt so
-      // the user can always take the floor without being talked over.
-      if (this.liveAvatarInstance) {
-        console.log("Interrupting avatar because user started speaking");
-        this.liveAvatarInstance.interrupt();
-        // Reset avatar speaking state to ensure clean turn-taking after interrupt
+      // Only interrupt if avatar is actually speaking
+      // Add cooldown to prevent too many interrupt() calls which can destabilize the SDK
+      if (this.liveAvatarInstance && this.isAvatarSpeaking) {
+        const now = Date.now();
+        if (now - this.lastInterruptTime >= this.interruptCooldown) {
+          console.log("Interrupting avatar because user started speaking");
+          try {
+            this.liveAvatarInstance.interrupt();
+            this.lastInterruptTime = now;
+          } catch (error) {
+            console.error("Error interrupting avatar:", error);
+          }
+        } else {
+          console.log("⏸️ Interrupt cooldown active - skipping interrupt call");
+        }
         this.isAvatarSpeaking = false;
       }
-    });
+      }));
 
-    this.liveAvatarInstance.on(AgentEventsEnum.USER_SPEAK_ENDED, () => {
+      this.liveAvatarInstance.on(AgentEventsEnum.USER_SPEAK_ENDED, safeHandler("USER_SPEAK_ENDED", () => {
       console.log("Agent event: USER_SPEAK_ENDED");
       this.isUserSpeaking = false;
       
@@ -337,12 +379,21 @@ export class LiveAvatarClient {
         this.userSpeakingTimeout = null;
       }
       
-      // MOVED HERE: Reset after user FINISHES speaking, not when they start
-      // This allows avatar to respond after user completes their turn
-      this.hasAvatarSpokenSinceLastUser = false;
-    });
+      // Clear any existing "finished speaking" timeout
+      if (this.userFinishedSpeakingTimeout) {
+        clearTimeout(this.userFinishedSpeakingTimeout);
+      }
+      
+      // IMPROVED FIX: Wait 1.5 seconds after USER_SPEAK_ENDED before allowing avatar to respond
+      // This handles long speeches with natural pauses where VAD might trigger multiple times
+      this.userFinishedSpeakingTimeout = setTimeout(() => {
+        this.hasAvatarSpokenSinceLastUser = false;
+        console.log("✓ Avatar can now respond to user (user finished speaking)");
+        this.userFinishedSpeakingTimeout = null;
+      }, 1500);
+      }));
 
-    this.liveAvatarInstance.on(AgentEventsEnum.AVATAR_SPEAK_STARTED, () => {
+      this.liveAvatarInstance.on(AgentEventsEnum.AVATAR_SPEAK_STARTED, safeHandler("AVATAR_SPEAK_STARTED", () => {
       console.log("Agent event: AVATAR_SPEAK_STARTED");
 
       // Enforce training rules:
@@ -355,68 +406,100 @@ export class LiveAvatarClient {
 
       if (!shouldAllowAvatarSpeech && this.liveAvatarInstance) {
         console.log(
-          "Blocking avatar speech to prevent it from starting or continuing the conversation on its own"
+          "⚠️ Blocking avatar: user hasn't spoken yet or avatar already responded"
         );
-        this.liveAvatarInstance.interrupt();
+        const now = Date.now();
+        if (now - this.lastInterruptTime >= this.interruptCooldown) {
+          try {
+            this.liveAvatarInstance.interrupt();
+            this.lastInterruptTime = now;
+          } catch (error) {
+            console.error("Error interrupting avatar (blocking):", error);
+          }
+        } else {
+          console.log("⏸️ Interrupt cooldown active - avatar will stop naturally");
+        }
         return;
       }
 
+      console.log("✓ Avatar speech allowed - responding to user");
       this.isAvatarSpeaking = true;
       // NOTE: Don't set hasAvatarSpokenSinceLastUser here - wait until avatar finishes speaking
 
       // Extra guard: if for any reason the user is marked as speaking when
       // the avatar starts, immediately interrupt to avoid overlap.
       if (this.isUserSpeaking && this.liveAvatarInstance) {
-        console.log("User is speaking while avatar started - interrupting avatar");
-        this.liveAvatarInstance.interrupt();
+        console.log("⚠️ User is speaking while avatar started - interrupting avatar");
+        const now = Date.now();
+        if (now - this.lastInterruptTime >= this.interruptCooldown) {
+          try {
+            this.liveAvatarInstance.interrupt();
+            this.lastInterruptTime = now;
+          } catch (error) {
+            console.error("Error interrupting avatar (user speaking):", error);
+          }
+        } else {
+          console.log("⏸️ Interrupt cooldown active");
+        }
+        this.isAvatarSpeaking = false;
       }
-    });
+      }));
 
-    this.liveAvatarInstance.on(AgentEventsEnum.AVATAR_SPEAK_ENDED, () => {
+      this.liveAvatarInstance.on(AgentEventsEnum.AVATAR_SPEAK_ENDED, safeHandler("AVATAR_SPEAK_ENDED", () => {
       console.log("Agent event: AVATAR_SPEAK_ENDED");
       this.isAvatarSpeaking = false;
+      this.isPlayingAudio = false; // Reset audio playing state
       // Set flag ONLY when avatar successfully completes speaking
       this.hasAvatarSpokenSinceLastUser = true;
-    });
+      console.log("✓ Avatar finished speaking");
+      }));
+    }
 
     // Handle avatar transcription
-    this.liveAvatarInstance.on(AgentEventsEnum.AVATAR_TRANSCRIPTION, (data: any) => {
+    this.liveAvatarInstance.on(AgentEventsEnum.AVATAR_TRANSCRIPTION, safeHandler("AVATAR_TRANSCRIPTION", (data: any) => {
       const text = (data.text || data.transcript || "").trim();
       if (!this.shouldEmitTranscript("avatar", text)) {
         return;
       }
 
-      console.log("Avatar transcription:", data);
+      console.log("Avatar transcription:", text);
       this.transcriptCallback?.({
         text,
         speaker: "avatar",
         timestamp: Date.now(),
       });
-    });
+    }));
 
     // Handle user transcription
-    this.liveAvatarInstance.on(AgentEventsEnum.USER_TRANSCRIPTION, (data: any) => {
+    this.liveAvatarInstance.on(AgentEventsEnum.USER_TRANSCRIPTION, safeHandler("USER_TRANSCRIPTION", (data: any) => {
       const text = (data.text || data.transcript || "").trim();
       if (!this.shouldEmitTranscript("user", text)) {
         return;
       }
 
-      console.log("User transcription:", data);
+      console.log("User transcription:", text);
       this.transcriptCallback?.({
         text,
         speaker: "user",
         timestamp: Date.now(),
       });
-    });
+    }));
 
     // Handle connection events
-    this.liveAvatarInstance.on(SessionEvent.SESSION_STATE_CHANGED, (state: any) => {
+    this.liveAvatarInstance.on(SessionEvent.SESSION_STATE_CHANGED, safeHandler("SESSION_STATE_CHANGED", (state: any) => {
       console.log("Session state changed:", state);
-    });
+      if (state === "DISCONNECTING" || state === "DISCONNECTED") {
+        console.warn("⚠️ Session is disconnecting - this may be due to:");
+        console.warn("  - API session timeout (check your plan limits)");
+        console.warn("  - Network issues");
+        console.warn("  - SDK error from too many interrupts");
+      }
+    }));
 
-    this.liveAvatarInstance.on(SessionEvent.SESSION_DISCONNECTED, () => {
-      console.log("Disconnected from LiveAvatar");
-    });
+    this.liveAvatarInstance.on(SessionEvent.SESSION_DISCONNECTED, safeHandler("SESSION_DISCONNECTED", () => {
+      console.error("❌ Disconnected from LiveAvatar - session ended unexpectedly");
+      console.error("Check the HeyGen dashboard for API usage and session limits");
+    }));
   }
 
   /**
@@ -452,8 +535,25 @@ export class LiveAvatarClient {
       return;
     }
 
+    // Don't send audio if we've been interrupted
+    if (this.isInterrupted) {
+      console.log("⏸️ Skipping audio - avatar was interrupted");
+      this.isInterrupted = false; // Reset for next audio
+      return;
+    }
+
+    // Mark avatar as playing audio
+    this.isPlayingAudio = true;
+    this.isInterrupted = false; // Reset interrupt flag
     console.log("Sending PCM audio to LiveAvatar (CUSTOM mode)");
-    this.liveAvatarInstance.repeatAudio(trimmed);
+    
+    try {
+      this.liveAvatarInstance.repeatAudio(trimmed);
+    } catch (error) {
+      this.isPlayingAudio = false;
+      this.isInterrupted = false;
+      throw error;
+    }
   }
 
   /**
@@ -464,13 +564,68 @@ export class LiveAvatarClient {
   }
 
   /**
+   * Mark audio playback as finished (call this when audio completes naturally)
+   */
+  markAudioFinished(): void {
+    this.isPlayingAudio = false;
+    this.isAvatarSpeaking = false;
+    this.isInterrupted = false; // Reset interrupt flag when audio finishes naturally
+  }
+
+  /**
+   * Interrupt any ongoing avatar speech (CUSTOM mode playback)
+   * For CUSTOM mode with OpenAI, this should be called immediately when user interrupts
+   * @param force - If true, bypass cooldown and state checks for immediate interruption
+   */
+  interruptSpeech(force = false): void {
+    if (!this.liveAvatarInstance) {
+      return;
+    }
+
+    // For CUSTOM mode or forced interrupts, bypass cooldown for immediate response
+    const now = Date.now();
+    const canInterrupt = force || this.mode === "CUSTOM" || (now - this.lastInterruptTime >= this.interruptCooldown);
+    
+    if (!canInterrupt && !force) {
+      console.log("⏸️ Interrupt cooldown active - skipping interrupt call");
+      return;
+    }
+
+    // In CUSTOM mode, always interrupt if force is true (OpenAI detected user speech)
+    // Otherwise, only interrupt if avatar is actually playing audio
+    if (!force && !this.isPlayingAudio) {
+      console.log("⏸️ Avatar not playing audio - skipping interrupt");
+      return;
+    }
+
+    try {
+      console.log(`🛑 Interrupting LiveAvatar speech${force ? " (forced by OpenAI)" : ""}`);
+      this.liveAvatarInstance.interrupt();
+      this.lastInterruptTime = now;
+      this.isPlayingAudio = false;
+      this.isAvatarSpeaking = false;
+      this.isInterrupted = true; // Mark as interrupted to prevent sending more audio
+    } catch (error) {
+      console.error("Error interrupting avatar speech:", error);
+      this.isPlayingAudio = false;
+      this.isAvatarSpeaking = false;
+      this.isInterrupted = true;
+    }
+  }
+
+  /**
    * End the session and cleanup
    */
   async endSession(): Promise<void> {
-    // Clean up timeout
+    // Clean up timeouts
     if (this.userSpeakingTimeout) {
       clearTimeout(this.userSpeakingTimeout);
       this.userSpeakingTimeout = null;
+    }
+    
+    if (this.userFinishedSpeakingTimeout) {
+      clearTimeout(this.userFinishedSpeakingTimeout);
+      this.userFinishedSpeakingTimeout = null;
     }
     
     if (this.liveAvatarInstance) {
@@ -500,7 +655,8 @@ export const createLiveAvatarClient = (
   avatarId: string,
   voiceId?: string,
   contextId?: string,
-  mode: "FULL" | "CUSTOM" = "FULL"
+  mode: "FULL" | "CUSTOM" = "FULL",
+  options?: { enforceTurnTaking?: boolean }
 ): LiveAvatarClient => {
   const apiKey = getLiveAvatarApiKey();
 
@@ -510,5 +666,6 @@ export const createLiveAvatarClient = (
     voiceId: voiceId,
     contextId: contextId,
     mode,
+    enforceTurnTaking: options?.enforceTurnTaking,
   });
 };

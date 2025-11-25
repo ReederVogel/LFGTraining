@@ -56,7 +56,7 @@ export default function SelectAvatarPage() {
                 </p>
 
                 <Link
-                  href={`/conversation/${avatar.id}`}
+                  href={`/session/${avatar.id}`}
                   className="block w-full text-center px-5 py-3 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 transition-colors duration-200 btn-primary"
                 >
                   Start Session

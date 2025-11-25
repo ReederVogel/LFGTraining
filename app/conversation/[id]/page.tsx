@@ -201,16 +201,18 @@ export default function ConversationPage({ params }: { params: { id: string } })
   }
 
   return (
-    <main className="flex min-h-screen flex-col p-6 lg:p-8 bg-slate-50">
-      <div className="max-w-7xl w-full mx-auto space-y-6">
+    <main className="flex min-h-screen flex-col p-6 lg:p-8 bg-white">
+      <div className="max-w-6xl w-full mx-auto space-y-8">
         {/* Header */}
-        <div className="bg-white border-b border-slate-200 p-6">
+        <div className="text-center space-y-4">
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-medium text-slate-900">
+            <div className="flex-1"></div>
+            <div className="flex-1 text-center">
+              <h1 className="text-3xl font-light text-slate-900 tracking-tight">
                 Training Session
               </h1>
-              <p className="text-slate-600 mt-1 flex items-center gap-2 text-sm">
+              <div className="w-16 h-0.5 bg-slate-900 mx-auto mt-3"></div>
+              <p className="text-slate-600 mt-4 flex items-center justify-center gap-2 text-sm font-light">
                 <span className="font-medium text-slate-900">{avatar.name}</span>
                 <span className="text-slate-300">•</span>
                 <span>{avatar.role}</span>
@@ -218,10 +220,10 @@ export default function ConversationPage({ params }: { params: { id: string } })
                 <span className="text-slate-500">{avatar.scenario}</span>
               </p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex-1 flex justify-end">
               <Link
                 href="/select-avatar"
-                className="px-5 py-2 text-slate-600 hover:text-slate-900 border border-slate-300 hover:border-slate-400 rounded-lg transition-colors duration-200 text-sm font-medium"
+                className="px-5 py-2 text-slate-500 hover:text-slate-900 transition-colors duration-200 text-sm"
               >
                 ← Back
               </Link>
@@ -229,13 +231,11 @@ export default function ConversationPage({ params }: { params: { id: string } })
           </div>
         </div>
 
-        {/* Two Column Layout */}
-        <div className="grid grid-cols-3 gap-6">
-          {/* Left Side - Avatar and Transcript */}
-          <div className="col-span-2 space-y-6">
-            {/* Video Area */}
-            <div className="bg-white border border-slate-200 overflow-hidden">
-              <div className="aspect-video bg-slate-900 relative">
+        {/* Main Content */}
+        <div className="space-y-6">
+          {/* Video Area */}
+          <div className="bg-white border border-slate-200 overflow-hidden">
+            <div className="aspect-video bg-slate-900 relative">
             {/* Video element - always rendered, visibility controlled by z-index */}
             <video
               ref={videoRef}
@@ -290,8 +290,8 @@ export default function ConversationPage({ params }: { params: { id: string } })
             {/* Connected prompt overlay */}
             {isSessionActive && showConnectedPrompt && !error && (
               <div className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none p-4">
-                <div className="pointer-events-auto bg-white text-slate-900 px-6 py-3 border border-slate-300 flex items-center gap-4">
-                  <span className="text-sm font-medium">
+                <div className="pointer-events-auto bg-white text-slate-900 px-6 py-3 border border-slate-200 flex items-center gap-4 shadow-sm">
+                  <span className="text-sm font-light">
                     Connected. Say &quot;hello&quot; to begin.
                   </span>
                   <button
@@ -309,7 +309,7 @@ export default function ConversationPage({ params }: { params: { id: string } })
             <div className="absolute inset-x-0 bottom-0 z-30 pointer-events-none">
               <div className="bg-gradient-to-t from-black/70 to-transparent p-6 flex justify-center items-center gap-4">
                 {isSessionActive && (
-                  <div className="pointer-events-auto inline-flex items-center px-5 py-3 bg-white/90 text-slate-900 text-sm font-semibold border-2 border-slate-300 rounded-lg">
+                  <div className="pointer-events-auto inline-flex items-center px-4 py-2 bg-white/90 text-slate-900 text-sm font-medium rounded-lg border border-slate-200">
                     <span className="w-2 h-2 rounded-full bg-emerald-600 mr-2"></span>
                     <span className="font-mono">{formatDuration(elapsedSeconds)}</span>
                   </div>
@@ -317,14 +317,14 @@ export default function ConversationPage({ params }: { params: { id: string } })
                 {isSessionActive ? (
                   <button
                     onClick={handleEndSession}
-                    className="pointer-events-auto px-8 py-3.5 bg-red-600 hover:bg-red-700 text-white text-base font-semibold rounded-lg transition-colors duration-200 btn-primary"
+                    className="pointer-events-auto px-8 py-3 bg-red-600 hover:bg-red-700 text-white text-base font-medium rounded-lg transition-colors duration-200"
                   >
                     End Session
                   </button>
                 ) : (
                   <button
                     onClick={handleStartSession}
-                    className="pointer-events-auto px-10 py-4 bg-emerald-600 hover:bg-emerald-700 text-white text-lg font-semibold rounded-lg transition-colors duration-200 shadow-lg btn-primary"
+                    className="pointer-events-auto px-10 py-4 bg-emerald-600 hover:bg-emerald-700 text-white text-lg font-medium rounded-lg transition-colors duration-200"
                   >
                     Start Session
                   </button>
@@ -334,18 +334,22 @@ export default function ConversationPage({ params }: { params: { id: string } })
           </div>
         </div>
 
-            {/* Real-time Transcript Section */}
-            <div className="bg-white border border-slate-200 p-6">
-              <h2 className="text-lg font-medium text-slate-900 mb-4">
+          {/* Real-time Transcript Section */}
+          <div className="bg-white border border-slate-200">
+            <div className="p-6 border-b border-slate-200">
+              <h2 className="text-lg font-light text-slate-900">
                 Transcript
               </h2>
-              <div className="bg-slate-50 p-4 min-h-[200px] max-h-[400px] overflow-y-auto">
-                {transcript.length > 0 ? (
-                  <div className="flex flex-col-reverse gap-3">
-                    {transcript.map((event, index) => (
+            </div>
+            <div className="p-6 min-h-[300px] max-h-[500px] overflow-y-auto">
+              {transcript.length > 0 ? (
+                <div className="flex flex-col gap-4">
+                  {transcript
+                    .sort((a, b) => b.timestamp - a.timestamp)
+                    .map((event, index) => (
                       <div
                         key={`${event.timestamp}-${index}`}
-                        className={`p-3 text-sm ${
+                        className={`p-4 text-sm ${
                           event.speaker === "user"
                             ? "bg-emerald-600 text-white ml-8"
                             : "bg-white text-slate-900 mr-8 border border-slate-200"
@@ -361,21 +365,14 @@ export default function ConversationPage({ params }: { params: { id: string } })
                         </div>
                       </div>
                     ))}
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-center h-full text-center py-12">
-                    <p className="text-slate-400 text-sm">
-                      Conversation transcript will appear here...
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Right Side - Reserved for Future Features */}
-          <div className="space-y-6">
-            <div className="bg-white border border-slate-200 p-6 min-h-[600px]">
+                </div>
+              ) : (
+                <div className="flex items-center justify-center h-full text-center py-16">
+                  <p className="text-slate-400 text-sm font-light">
+                    Conversation transcript will appear here...
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>
