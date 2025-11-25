@@ -24,6 +24,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
   const [error, setError] = useState<string | null>(null);
   const [connectedAt, setConnectedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [hasUserStartedSpeaking, setHasUserStartedSpeaking] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const avatarClientRef = useRef<LiveAvatarClient | null>(null);
@@ -354,6 +355,9 @@ export default function SessionPage({ params }: { params: { id: string } }) {
 
             case "conversation.item.input_audio_transcription.completed":
               if (data.transcript && data.item_id) {
+                // Mark that user has started speaking
+                setHasUserStartedSpeaking(true);
+                
                 setTranscript(prev => {
                   const existingIndex = prev.findIndex(
                     item => item.speaker === "user" && item.id === data.item_id
@@ -457,6 +461,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     
     setIsStarting(true);
     setError(null);
+    setHasUserStartedSpeaking(false); // Reset when starting new session
     
     try {
       const avatarReady = await initializeLiveAvatar();
@@ -657,7 +662,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                 <p className="text-sm text-slate-600 mt-1">
                   {status}
                 </p>
-                {isConnected && status === "Ready - Start speaking!" && (
+                {isConnected && status === "Ready - Start speaking!" && !hasUserStartedSpeaking && (
                   <div className="mt-3 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
                     <p className="text-sm text-emerald-800 font-medium">
                       Say "Hello" to begin the conversation

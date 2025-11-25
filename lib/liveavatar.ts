@@ -44,10 +44,14 @@ export class LiveAvatarClient {
   private userFinishedSpeakingTimeout: NodeJS.Timeout | null = null;
   private lastInterruptTime = 0;
   private interruptCooldown = 500; // Minimum 500ms between interrupt calls
+  private interruptCount = 0; // Track interrupt count to prevent SDK crashes
+  private interruptCountResetTime = 0; // Reset interrupt count after a period
   // Track if avatar is currently playing audio (for CUSTOM mode with OpenAI)
   private isPlayingAudio = false;
   // Track if avatar has been interrupted (to prevent sending more audio)
   private isInterrupted = false;
+  // Track session state to prevent interrupts during disconnection
+  private isSessionDisconnecting = false;
 
   constructor(config: {
     apiKey: string;
@@ -198,6 +202,13 @@ export class LiveAvatarClient {
    */
   async initialize(videoElement: HTMLVideoElement): Promise<void> {
     this.videoElement = videoElement;
+
+    // Reset interrupt tracking for new session
+    this.interruptCount = 0;
+    this.interruptCountResetTime = 0;
+    this.isSessionDisconnecting = false;
+    this.isInterrupted = false;
+    this.isPlayingAudio = false;
 
     try {
       console.log("Step 1: Creating session token...");
@@ -488,11 +499,17 @@ export class LiveAvatarClient {
     // Handle connection events
     this.liveAvatarInstance.on(SessionEvent.SESSION_STATE_CHANGED, safeHandler("SESSION_STATE_CHANGED", (state: any) => {
       console.log("Session state changed:", state);
-      if (state === "DISCONNECTING" || state === "DISCONNECTED") {
+      if (state === "DISCONNECTING") {
+        this.isSessionDisconnecting = true;
         console.warn("⚠️ Session is disconnecting - this may be due to:");
         console.warn("  - API session timeout (check your plan limits)");
         console.warn("  - Network issues");
         console.warn("  - SDK error from too many interrupts");
+      } else if (state === "DISCONNECTED") {
+        this.isSessionDisconnecting = true;
+        console.warn("⚠️ Session disconnected");
+      } else {
+        this.isSessionDisconnecting = false;
       }
     }));
 
@@ -582,17 +599,36 @@ export class LiveAvatarClient {
       return;
     }
 
-    // For CUSTOM mode or forced interrupts, bypass cooldown for immediate response
-    const now = Date.now();
-    const canInterrupt = force || this.mode === "CUSTOM" || (now - this.lastInterruptTime >= this.interruptCooldown);
-    
-    if (!canInterrupt && !force) {
-      console.log("⏸️ Interrupt cooldown active - skipping interrupt call");
+    // Don't interrupt if session is disconnecting or disconnected
+    if (this.isSessionDisconnecting) {
+      console.log("⏸️ Session is disconnecting - skipping interrupt");
       return;
     }
 
-    // In CUSTOM mode, always interrupt if force is true (OpenAI detected user speech)
-    // Otherwise, only interrupt if avatar is actually playing audio
+    const now = Date.now();
+    
+    // Reset interrupt count after 10 seconds of no interrupts
+    if (now - this.interruptCountResetTime > 10000) {
+      this.interruptCount = 0;
+    }
+    
+    // Prevent too many interrupts in short time (can crash SDK)
+    // Allow max 5 interrupts per 10 seconds
+    if (this.interruptCount >= 5 && now - this.interruptCountResetTime < 10000) {
+      console.warn("⚠️ Too many interrupts - skipping to prevent SDK crash");
+      return;
+    }
+
+    // Check cooldown - even in CUSTOM mode, respect minimum cooldown to prevent SDK crashes
+    const timeSinceLastInterrupt = now - this.lastInterruptTime;
+    const cooldownRequired = this.mode === "CUSTOM" ? 300 : this.interruptCooldown; // Shorter cooldown for CUSTOM mode
+    
+    if (!force && timeSinceLastInterrupt < cooldownRequired) {
+      console.log(`⏸️ Interrupt cooldown active (${timeSinceLastInterrupt}ms < ${cooldownRequired}ms) - skipping interrupt call`);
+      return;
+    }
+
+    // Only interrupt if avatar is actually playing audio (unless forced)
     if (!force && !this.isPlayingAudio) {
       console.log("⏸️ Avatar not playing audio - skipping interrupt");
       return;
@@ -602,6 +638,8 @@ export class LiveAvatarClient {
       console.log(`🛑 Interrupting LiveAvatar speech${force ? " (forced by OpenAI)" : ""}`);
       this.liveAvatarInstance.interrupt();
       this.lastInterruptTime = now;
+      this.interruptCount++;
+      this.interruptCountResetTime = now;
       this.isPlayingAudio = false;
       this.isAvatarSpeaking = false;
       this.isInterrupted = true; // Mark as interrupted to prevent sending more audio
