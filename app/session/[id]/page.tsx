@@ -209,6 +209,11 @@ export default function SessionPage({ params }: { params: { id: string } }) {
   };
 
   const initializeOpenAI = async (): Promise<boolean> => {
+    if (!avatar) {
+      setError("Avatar not found");
+      return false;
+    }
+
     try {
       setStatus("Connecting to OpenAI...");
       
