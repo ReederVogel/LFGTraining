@@ -33,6 +33,7 @@ export default function TestCustomOpenAIPage() {
   const audioFlushTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isFlushingAudioRef = useRef(false);
   const needsAnotherFlushRef = useRef(false);
+  const currentResponseIdRef = useRef<string | null>(null);
   const avatar = getAvatarById("sarah");
 
   const formatDuration = useCallback((totalSeconds: number): string => {
@@ -65,6 +66,17 @@ export default function TestCustomOpenAIPage() {
       clearTimeout(audioFlushTimeoutRef.current);
       audioFlushTimeoutRef.current = null;
     }
+    
+    // Remove interrupted transcript entries if avatar was interrupted
+    if (interruptAvatar && currentResponseIdRef.current) {
+      const responseIdToRemove = currentResponseIdRef.current;
+      setTranscript(prev => prev.filter(
+        item => !(item.speaker === "assistant" && item.id === responseIdToRemove)
+      ));
+      currentResponseIdRef.current = null;
+      console.log(`🗑️ Removed interrupted transcript for response_id: ${responseIdToRemove}`);
+    }
+    
     if (interruptAvatar && avatarClientRef.current) {
       try {
         // Force interrupt when OpenAI detects user speech - bypass cooldown for immediate response
@@ -320,6 +332,20 @@ export default function TestCustomOpenAIPage() {
                 break;
               }
               
+              // Track the current response_id being transcribed
+              // If a new response starts (different response_id), the old one was interrupted
+              if (currentResponseIdRef.current && currentResponseIdRef.current !== responseId) {
+                // Previous response was interrupted (didn't complete), remove it
+                const oldResponseId = currentResponseIdRef.current;
+                setTranscript(prev => prev.filter(
+                  item => !(item.speaker === "assistant" && item.id === oldResponseId)
+                ));
+                console.log(`🗑️ Removed interrupted transcript for response_id: ${oldResponseId} (new response started)`);
+              }
+              
+              // Always update to track the current response being transcribed
+              currentResponseIdRef.current = responseId;
+              
               setTranscript(prev => {
                 // Find existing entry with this response_id
                 const existingIndex = prev.findIndex(
@@ -403,12 +429,23 @@ export default function TestCustomOpenAIPage() {
               if (avatarClientRef.current) {
                 avatarClientRef.current.markAudioFinished();
               }
+              // Clear current response_id tracking when response completes successfully
+              currentResponseIdRef.current = null;
               setStatus("Ready - Start speaking!");
               break;
 
             case "response.canceled":
             case "response.cancelled":
             case "response.error":
+              // Remove interrupted transcript entries
+              if (currentResponseIdRef.current) {
+                const responseIdToRemove = currentResponseIdRef.current;
+                setTranscript(prev => prev.filter(
+                  item => !(item.speaker === "assistant" && item.id === responseIdToRemove)
+                ));
+                currentResponseIdRef.current = null;
+                console.log(`🗑️ Removed canceled transcript for response_id: ${responseIdToRemove}`);
+              }
               clearPendingAudio(true);
               break;
 
