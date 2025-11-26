@@ -1,53 +1,63 @@
-# LiveAvatar Integration Setup
+# LFGTraining Studio Setup
 
 ## Environment Variables
 
 Create a `.env.local` file in the root directory with the following content:
 
 ```
-NEXT_PUBLIC_LIVEAVATAR_API_KEY=ed58aa4b-3e18-405c-9ccc-db37f170c336
+NEXT_PUBLIC_LIVEAVATAR_API_KEY=your_liveavatar_api_key_here
+OPENAI_API_KEY=your_openai_api_key_here
 ```
+
+**Important**: Replace the placeholder values with your actual API keys.
 
 ## Avatar Configuration
 
-The avatar IDs have been configured in `lib/avatars.ts`:
+Configure avatars in `lib/avatars.ts`:
 
-- **Sarah (Widow)**: `513fd1b7-7ef9-466d-9af2-344e51eeb833`
-- **James (Son)**: `55eec60c-d665-4972-a529-bbdcaf665ab8`
+- **Sarah (Widow)**: Practicing conversations with a widow who lost her husband
+- **Michael (Son)**: Practicing conversations with a son who lost his father
 
-## LiveAvatar SDK Integration
+### Avatar Fields
 
-The LiveAvatar client is implemented in `lib/liveavatar.ts`. This is a flexible implementation that can be adapted based on the actual LiveAvatar SDK documentation.
+Each avatar requires:
+- `avatarId`: LiveAvatar avatar ID (for video streaming)
+- `voiceId`: LiveAvatar voice ID (optional, for avatar voice)
+- `openaiPromptId`: OpenAI prompt ID (defines the avatar's persona and behavior)
+- `openaiPromptVersion`: Version of the OpenAI prompt
+- `imageSrc`: Path to avatar placeholder image
 
-### Current Implementation
+## How It Works (CUSTOM Mode)
 
-The implementation includes:
+The app uses **CUSTOM mode** which combines:
 
-1. **Session Management**: Creates and manages LiveAvatar sessions
-2. **Video Streaming**: Handles video element initialization and streaming
-3. **Real-time Transcripts**: WebSocket-based transcript handling
-4. **Error Handling**: Comprehensive error handling and user feedback
+1. **LiveAvatar**: Provides real-time video streaming and avatar animation
+2. **OpenAI Realtime API**: Handles conversation logic and generates responses
+3. **Audio Pipeline**: OpenAI audio is streamed to LiveAvatar for lip-sync
 
-### Next Steps
+### Flow:
 
-You may need to update `lib/liveavatar.ts` based on the actual LiveAvatar SDK:
+1. User speaks → Microphone captures audio
+2. Audio sent to OpenAI Realtime API
+3. OpenAI processes speech and generates response
+4. Response audio streamed back in real-time
+5. Audio sent to LiveAvatar for lip-synced animation
+6. User sees avatar speaking with natural lip movements
 
-1. **API Base URL**: Update `API_BASE_URL` in `lib/liveavatar.ts` with the correct LiveAvatar API endpoint
-2. **SDK Package**: If LiveAvatar provides an npm package, install it and update the imports
-3. **Streaming Protocol**: Adapt the video streaming implementation based on LiveAvatar's protocol (HLS, WebRTC, etc.)
-4. **WebSocket Format**: Update WebSocket message format based on LiveAvatar's API specification
+## Testing
 
-### Testing
-
-1. Ensure `.env.local` is created with the API key
+1. Ensure `.env.local` is created with both API keys
 2. Start the development server: `npm run dev`
-3. Navigate to the app and select an avatar
-4. The conversation page should initialize the LiveAvatar session
-5. Check browser console for any API-related errors
+3. Navigate to [http://localhost:3000](http://localhost:3000)
+4. Select an avatar
+5. Click "Start Session"
+6. Begin speaking when connected
 
 ## Troubleshooting
 
-- **API Key Error**: Ensure `NEXT_PUBLIC_LIVEAVATAR_API_KEY` is set in `.env.local`
+- **API Key Error**: Ensure both `NEXT_PUBLIC_LIVEAVATAR_API_KEY` and `OPENAI_API_KEY` are set in `.env.local`
 - **Avatar Not Loading**: Verify avatar IDs are correct in `lib/avatars.ts`
-- **Connection Issues**: Check the API base URL in `lib/liveavatar.ts` matches LiveAvatar's documentation
+- **No Audio**: Check microphone permissions in browser
+- **Connection Issues**: Check browser console for detailed error messages
+- **OpenAI Errors**: Verify your OpenAI API key has access to the Realtime API
 

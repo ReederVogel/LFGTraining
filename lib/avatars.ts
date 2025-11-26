@@ -5,7 +5,6 @@ export interface Avatar {
   scenario: string;
   avatarId: string; // LiveAvatar avatar ID
   voiceId?: string; // LiveAvatar voice ID (optional)
-  contextId?: string; // LiveAvatar context ID (optional)
   imageSrc?: string; // Optional avatar image path (from /public)
   openaiPromptId?: string; // OpenAI prompt ID for custom mode
   openaiPromptVersion?: string; // OpenAI prompt version
@@ -19,10 +18,9 @@ export const avatars: Avatar[] = [
     scenario: "Lost her husband",
     avatarId: "513fd1b7-7ef9-466d-9af2-344e51eeb833",
     voiceId: "b9d23d16-9437-44d5-89c4-b4dd61c3fdc8",
-    // contextId not needed in CUSTOM mode - only used in FULL mode
     imageSrc: "/avatars/sarah-avatar.jpg",
     openaiPromptId: "pmpt_692533270e8c81939cb2030024753c36043ae653ab747fbc",
-    openaiPromptVersion: "9",
+    openaiPromptVersion: "14",
   },
   {
     id: "michael",
@@ -30,10 +28,9 @@ export const avatars: Avatar[] = [
     role: "Son",
     scenario: "Lost his father",
     avatarId: "55eec60c-d665-4972-a529-bbdcaf665ab8",
-    // contextId not needed in CUSTOM mode - only used in FULL mode
     imageSrc: "/avatars/michael-avatar.jpg",
     openaiPromptId: "pmpt_69255833be5881969a360d5e2352410d0f22b7676fbf534a",
-    openaiPromptVersion: "4",
+    openaiPromptVersion: "6",
   },
 ];
 

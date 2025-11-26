@@ -28,6 +28,7 @@ export class LiveAvatarClient {
   private enforceTurnTaking: boolean;
   private videoElement: HTMLVideoElement | null = null;
   private transcriptCallback: ((event: TranscriptEvent) => void) | null = null;
+  private audioStateCallback: ((isPlaying: boolean) => void) | null = null;
   private liveAvatarInstance: LiveAvatarSession | null = null;
   private sessionId: string | null = null;
   private recentTranscripts = new Map<"user" | "avatar", { text: string; timestamp: number }>();
@@ -52,6 +53,14 @@ export class LiveAvatarClient {
   private isInterrupted = false;
   // Track session state to prevent interrupts during disconnection
   private isSessionDisconnecting = false;
+  // Track consecutive audio send failures for recovery
+  private consecutiveAudioFailures = 0;
+  private lastAudioFailureTime = 0;
+  private lastSuccessfulAudioTime = 0;
+  // Track if we're waiting for AVATAR_SPEAK_STARTED confirmation
+  private pendingAudioConfirmation = false;
+  private audioConfirmationTimeout: NodeJS.Timeout | null = null;
+  private audioFallbackTimeout: NodeJS.Timeout | null = null;
 
   constructor(config: {
     apiKey: string;
@@ -209,6 +218,18 @@ export class LiveAvatarClient {
     this.isSessionDisconnecting = false;
     this.isInterrupted = false;
     this.isPlayingAudio = false;
+    this.consecutiveAudioFailures = 0;
+    this.lastAudioFailureTime = 0;
+    this.lastSuccessfulAudioTime = 0;
+    this.pendingAudioConfirmation = false;
+    if (this.audioConfirmationTimeout) {
+      clearTimeout(this.audioConfirmationTimeout);
+      this.audioConfirmationTimeout = null;
+    }
+    if (this.audioFallbackTimeout) {
+      clearTimeout(this.audioFallbackTimeout);
+      this.audioFallbackTimeout = null;
+    }
 
     try {
       console.log("Step 1: Creating session token...");
@@ -496,6 +517,61 @@ export class LiveAvatarClient {
       });
     }));
 
+    // Register AVATAR_SPEAK_STARTED and AVATAR_SPEAK_ENDED handlers for CUSTOM mode
+    // ALWAYS register these for CUSTOM mode to track audio state
+    // Note: repeatAudio() may not trigger AVATAR_SPEAK_STARTED, so we have a fallback
+    if (this.mode === "CUSTOM") {
+      this.liveAvatarInstance.on(AgentEventsEnum.AVATAR_SPEAK_STARTED, safeHandler("AVATAR_SPEAK_STARTED (CUSTOM)", () => {
+        console.log("✅ Agent event: AVATAR_SPEAK_STARTED (CUSTOM mode) - audio confirmed playing");
+        this.isAvatarSpeaking = true;
+        this.isPlayingAudio = true; // Ensure audio state is tracked
+        this.pendingAudioConfirmation = false;
+        this.consecutiveAudioFailures = 0; // Reset failure count on success
+        this.lastSuccessfulAudioTime = Date.now();
+        
+        // Clear any pending confirmation timeout (including fallback)
+        if (this.audioConfirmationTimeout) {
+          clearTimeout(this.audioConfirmationTimeout);
+          this.audioConfirmationTimeout = null;
+        }
+        if (this.audioFallbackTimeout) {
+          clearTimeout(this.audioFallbackTimeout);
+          this.audioFallbackTimeout = null;
+        }
+        
+        // Notify that audio actually started playing
+        if (this.audioStateCallback) {
+          this.audioStateCallback(true);
+        }
+        
+        console.log("✅ AVATAR_SPEAK_STARTED event received - audio confirmed playing");
+      }));
+
+      this.liveAvatarInstance.on(AgentEventsEnum.AVATAR_SPEAK_ENDED, safeHandler("AVATAR_SPEAK_ENDED (CUSTOM)", () => {
+        console.log("✅ Agent event: AVATAR_SPEAK_ENDED (CUSTOM mode) - audio finished");
+        this.isAvatarSpeaking = false;
+        this.isPlayingAudio = false; // Reset audio playing state
+        this.pendingAudioConfirmation = false;
+        
+        // Clear any pending confirmation timeout (including fallback)
+        if (this.audioConfirmationTimeout) {
+          clearTimeout(this.audioConfirmationTimeout);
+          this.audioConfirmationTimeout = null;
+        }
+        if (this.audioFallbackTimeout) {
+          clearTimeout(this.audioFallbackTimeout);
+          this.audioFallbackTimeout = null;
+        }
+        
+        console.log("✓ Avatar finished speaking (CUSTOM mode)");
+        
+        // Notify that audio stopped
+        if (this.audioStateCallback) {
+          this.audioStateCallback(false);
+        }
+      }));
+    }
+
     // Handle connection events
     this.liveAvatarInstance.on(SessionEvent.SESSION_STATE_CHANGED, safeHandler("SESSION_STATE_CHANGED", (state: any) => {
       console.log("Session state changed:", state);
@@ -516,6 +592,28 @@ export class LiveAvatarClient {
     this.liveAvatarInstance.on(SessionEvent.SESSION_DISCONNECTED, safeHandler("SESSION_DISCONNECTED", () => {
       console.error("❌ Disconnected from LiveAvatar - session ended unexpectedly");
       console.error("Check the HeyGen dashboard for API usage and session limits");
+      // Reset all state when disconnected
+      this.isSessionDisconnecting = true;
+      this.isPlayingAudio = false;
+      this.isAvatarSpeaking = false;
+      this.isInterrupted = false;
+      this.pendingAudioConfirmation = false;
+      this.consecutiveAudioFailures = 0;
+      
+      // Clear confirmation timeouts
+      if (this.audioConfirmationTimeout) {
+        clearTimeout(this.audioConfirmationTimeout);
+        this.audioConfirmationTimeout = null;
+      }
+      if (this.audioFallbackTimeout) {
+        clearTimeout(this.audioFallbackTimeout);
+        this.audioFallbackTimeout = null;
+      }
+      
+      // Notify that audio stopped
+      if (this.mode === "CUSTOM" && this.audioStateCallback) {
+        this.audioStateCallback(false);
+      }
     }));
   }
 
@@ -544,32 +642,172 @@ export class LiveAvatarClient {
    */
   async speakPcmAudio(base64Pcm: string): Promise<void> {
     if (!this.liveAvatarInstance) {
-      throw new Error("LiveAvatar instance not initialized");
+      const error = new Error("LiveAvatar instance not initialized");
+      console.error("❌ speakPcmAudio failed:", error.message);
+      this.consecutiveAudioFailures++;
+      this.lastAudioFailureTime = Date.now();
+      throw error;
+    }
+
+    // Don't send audio if session is disconnecting or disconnected
+    if (this.isSessionDisconnecting) {
+      console.warn("⏸️ Skipping audio - session is disconnecting");
+      return;
     }
 
     const trimmed = base64Pcm.trim();
     if (!trimmed) {
+      console.warn("⏸️ Skipping audio - empty payload");
       return;
     }
 
-    // Don't send audio if we've been interrupted
+    // Check if we've had too many consecutive failures - might indicate session issue
+    const now = Date.now();
+    if (this.consecutiveAudioFailures >= 3 && now - this.lastAudioFailureTime < 5000) {
+      console.error(`❌ Too many consecutive audio failures (${this.consecutiveAudioFailures}) - session may be broken`);
+      // Reset interrupt flag to allow recovery
+      this.isInterrupted = false;
+      // Don't throw - let caller handle recovery
+      return;
+    }
+
+    // Auto-recover interrupt flag if it's been stuck for too long
+    if (this.isInterrupted && now - this.lastAudioFailureTime > 2000) {
+      console.warn("⚠️ Interrupt flag stuck - auto-recovering");
+      this.isInterrupted = false;
+    }
+
+    // Don't send audio if we've been interrupted (unless auto-recovered above)
     if (this.isInterrupted) {
       console.log("⏸️ Skipping audio - avatar was interrupted");
       this.isInterrupted = false; // Reset for next audio
       return;
     }
 
-    // Mark avatar as playing audio
-    this.isPlayingAudio = true;
-    this.isInterrupted = false; // Reset interrupt flag
-    console.log("Sending PCM audio to LiveAvatar (CUSTOM mode)");
-    
+    // Validate session state before sending
     try {
+      // CRITICAL FIX: Wait for previous audio confirmation before sending new audio
+      // This prevents clearing fallback timeouts prematurely and ensures they can fire
+      if (this.pendingAudioConfirmation) {
+        const timeSinceLastAudio = now - this.lastSuccessfulAudioTime;
+        // Wait for fallback timeout (500ms) plus small buffer to ensure it fires
+        const waitTime = Math.max(0, 550 - timeSinceLastAudio);
+        if (waitTime > 0) {
+          console.log(`⏸️ Waiting ${waitTime}ms for previous audio confirmation (fallback timeout: 500ms)...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          // Re-check after delay
+          if (this.isSessionDisconnecting) {
+            console.warn("⏸️ Session disconnected during confirmation wait");
+            return;
+          }
+          // Recalculate time after waiting
+          const timeAfterWait = Date.now();
+          // If still pending after wait, fallback should have fired - reset state to allow new audio
+          if (this.pendingAudioConfirmation && timeAfterWait - this.lastSuccessfulAudioTime > 500) {
+            console.warn("⚠️ Previous audio confirmation still pending after wait - resetting state");
+            // Reset state to allow new audio (fallback should have handled it, but just in case)
+            this.pendingAudioConfirmation = false;
+          }
+        }
+      }
+
+      // Recalculate now in case we waited
+      const currentTime = Date.now();
+
+      // Mark avatar as playing audio
+      this.isPlayingAudio = true;
+      this.isInterrupted = false; // Reset interrupt flag
+      this.pendingAudioConfirmation = true;
+      
+      const audioSize = trimmed.length;
+      console.log(`📤 Sending PCM audio to LiveAvatar (CUSTOM mode) - size: ${audioSize} chars`);
+      
+      // Clear any existing timeouts
+      if (this.audioConfirmationTimeout) {
+        clearTimeout(this.audioConfirmationTimeout);
+      }
+      if (this.audioFallbackTimeout) {
+        clearTimeout(this.audioFallbackTimeout);
+      }
+      
+      // FALLBACK: repeatAudio() may not trigger AVATAR_SPEAK_STARTED events
+      // Use a shorter fallback timeout (500ms) to assume audio started if event doesn't fire
+      // This handles the SDK limitation where repeatAudio() doesn't emit events
+      this.audioFallbackTimeout = setTimeout(() => {
+        if (this.pendingAudioConfirmation && !this.isSessionDisconnecting) {
+          console.log("⚠️ Using fallback confirmation - repeatAudio() may not trigger AVATAR_SPEAK_STARTED");
+          // Manually confirm audio started (workaround for SDK limitation)
+          this.pendingAudioConfirmation = false;
+          this.isPlayingAudio = true;
+          this.consecutiveAudioFailures = 0;
+          this.lastSuccessfulAudioTime = Date.now();
+          
+          if (this.audioConfirmationTimeout) {
+            clearTimeout(this.audioConfirmationTimeout);
+            this.audioConfirmationTimeout = null;
+          }
+          this.audioFallbackTimeout = null;
+          
+          if (this.audioStateCallback) {
+            this.audioStateCallback(true);
+          }
+        }
+      }, 500); // Short fallback - assume audio started if event doesn't fire
+      
+      // Also set a longer timeout to detect actual failures
+      this.audioConfirmationTimeout = setTimeout(() => {
+        if (this.pendingAudioConfirmation) {
+          console.warn("⚠️ AVATAR_SPEAK_STARTED not received within 2s - audio may have failed silently");
+          console.warn("⚠️ Possible causes: SDK overloaded, network issue, or session disconnecting");
+          this.pendingAudioConfirmation = false;
+          this.isPlayingAudio = false;
+          this.consecutiveAudioFailures++;
+          this.lastAudioFailureTime = Date.now();
+          
+          // Clear fallback timeout if it's still pending
+          if (this.audioFallbackTimeout) {
+            clearTimeout(this.audioFallbackTimeout);
+            this.audioFallbackTimeout = null;
+          }
+          
+          // Notify that audio failed
+          if (this.mode === "CUSTOM" && this.audioStateCallback) {
+            this.audioStateCallback(false);
+          }
+        }
+      }, 2000);
+      
       this.liveAvatarInstance.repeatAudio(trimmed);
-    } catch (error) {
+      // Audio was sent successfully - will be confirmed by AVATAR_SPEAK_STARTED event or fallback
+      console.log("✅ Audio sent to LiveAvatar - waiting for confirmation");
+      
+      // Update last successful audio time
+      this.lastSuccessfulAudioTime = currentTime;
+      
+    } catch (error: any) {
       this.isPlayingAudio = false;
       this.isInterrupted = false;
-      throw error;
+      this.pendingAudioConfirmation = false;
+      this.consecutiveAudioFailures++;
+      this.lastAudioFailureTime = Date.now();
+      
+      // Clear confirmation timeout
+      if (this.audioConfirmationTimeout) {
+        clearTimeout(this.audioConfirmationTimeout);
+        this.audioConfirmationTimeout = null;
+      }
+      
+      // Notify that audio failed to send
+      if (this.mode === "CUSTOM" && this.audioStateCallback) {
+        this.audioStateCallback(false);
+      }
+      
+      const errorMessage = error?.message || String(error);
+      console.error(`❌ Error sending PCM audio to LiveAvatar: ${errorMessage}`);
+      console.error("Error details:", error);
+      
+      // Throw error so caller knows audio failed
+      throw new Error(`Failed to send audio to LiveAvatar: ${errorMessage}`);
     }
   }
 
@@ -581,12 +819,36 @@ export class LiveAvatarClient {
   }
 
   /**
+   * Set callback for audio state changes (for CUSTOM mode)
+   * Called when audio starts/stops playing
+   */
+  onAudioStateChange(callback: (isPlaying: boolean) => void): void {
+    this.audioStateCallback = callback;
+  }
+
+  /**
    * Mark audio playback as finished (call this when audio completes naturally)
    */
   markAudioFinished(): void {
     this.isPlayingAudio = false;
     this.isAvatarSpeaking = false;
     this.isInterrupted = false; // Reset interrupt flag when audio finishes naturally
+    this.pendingAudioConfirmation = false;
+    
+    // Clear confirmation timeouts
+    if (this.audioConfirmationTimeout) {
+      clearTimeout(this.audioConfirmationTimeout);
+      this.audioConfirmationTimeout = null;
+    }
+    if (this.audioFallbackTimeout) {
+      clearTimeout(this.audioFallbackTimeout);
+      this.audioFallbackTimeout = null;
+    }
+    
+    // Notify that audio finished (for CUSTOM mode)
+    if (this.mode === "CUSTOM" && this.audioStateCallback) {
+      this.audioStateCallback(false);
+    }
   }
 
   /**
@@ -664,6 +926,16 @@ export class LiveAvatarClient {
     if (this.userFinishedSpeakingTimeout) {
       clearTimeout(this.userFinishedSpeakingTimeout);
       this.userFinishedSpeakingTimeout = null;
+    }
+    
+    if (this.audioConfirmationTimeout) {
+      clearTimeout(this.audioConfirmationTimeout);
+      this.audioConfirmationTimeout = null;
+    }
+    
+    if (this.audioFallbackTimeout) {
+      clearTimeout(this.audioFallbackTimeout);
+      this.audioFallbackTimeout = null;
     }
     
     if (this.liveAvatarInstance) {

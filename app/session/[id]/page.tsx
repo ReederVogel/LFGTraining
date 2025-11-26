@@ -6,6 +6,8 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { createLiveAvatarClient, LiveAvatarClient } from "@/lib/liveavatar";
 import { getAvatarById } from "@/lib/avatars";
 
+const AVATAR_RESPONSE_DELAY_MS = 0; // No delay - avatar responds immediately
+
 interface TranscriptItem {
   speaker: "user" | "assistant";
   text: string;
@@ -28,6 +30,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const avatarClientRef = useRef<LiveAvatarClient | null>(null);
+  const transcriptScrollRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -38,6 +41,13 @@ export default function SessionPage({ params }: { params: { id: string } }) {
   const needsAnotherFlushRef = useRef(false);
   const messageSequenceRef = useRef(0);
   const currentResponseIdRef = useRef<string | null>(null);
+  const lastAudioSentTimeRef = useRef<number>(0);
+  const audioHealthCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastUserMessageTimestampRef = useRef<number>(0);
+  const userSpeechStartTimeRef = useRef<number | null>(null);
+  const pendingUserTranscriptRef = useRef<{ itemId: string; startTime: number } | null>(null);
+  // Map item_id to speech start time to handle multiple concurrent speech events
+  const userSpeechStartTimesRef = useRef<Map<string, number>>(new Map());
 
   const formatDuration = useCallback((totalSeconds: number): string => {
     const minutes = Math.floor(totalSeconds / 60)
@@ -61,6 +71,78 @@ export default function SessionPage({ params }: { params: { id: string } }) {
       window.clearInterval(intervalId);
     };
   }, [connectedAt]);
+
+  // Keep transcript scrolled to top (newest messages) when new messages arrive
+  useEffect(() => {
+    if (transcriptScrollRef.current) {
+      // Ensure scroll is at top to show newest messages
+      // Use setTimeout to ensure DOM has updated
+      const timeoutId = setTimeout(() => {
+        if (transcriptScrollRef.current) {
+          transcriptScrollRef.current.scrollTop = 0;
+        }
+      }, 0);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [transcript]);
+
+  const upsertAssistantTranscript = useCallback((responseId: string, textChunk: string, timestamp?: number) => {
+    if (!textChunk) {
+      return;
+    }
+    setTranscript(prev => {
+      const existingIndex = prev.findIndex(
+        item => item.speaker === "assistant" && item.id === responseId
+      );
+
+      if (existingIndex !== -1) {
+        const updated = [...prev];
+        updated[existingIndex] = {
+          ...updated[existingIndex],
+          text: updated[existingIndex].text + textChunk,
+        };
+        return updated;
+      }
+
+      // Ensure assistant message timestamp is always AFTER the last user message
+      // Also check if user is currently speaking (has a pending speech start time)
+      const now = Date.now();
+      
+      // Get the most recent user-related timestamp from multiple sources:
+      // 1. Last completed user message timestamp
+      // 2. Current pending speech start time (user is speaking now)
+      // 3. Any pending user transcript start time
+      // 4. Any stored speech start times for pending items
+      const storedStartTimes = Array.from(userSpeechStartTimesRef.current.values());
+      const maxStoredTime = storedStartTimes.length > 0 ? Math.max(...storedStartTimes) : 0;
+      
+      const lastUserTimestamp = Math.max(
+        lastUserMessageTimestampRef.current,
+        userSpeechStartTimeRef.current || 0, // Current speech start time
+        pendingUserTranscriptRef.current?.startTime || 0, // Pending transcript start time
+        maxStoredTime // Any stored speech start times
+      );
+      
+      // Ensure assistant timestamp is at least 50ms after user speech to handle rapid responses
+      // This buffer helps ensure proper ordering even with network delays
+      const minTimestamp = Math.max(
+        lastUserTimestamp + 50, // At least 50ms after last user message or current speech start
+        timestamp ? Math.max(timestamp, lastUserTimestamp + 50) : now, // Use provided timestamp but ensure it's after user
+        now // Never go back in time
+      );
+
+      return [
+        ...prev,
+        {
+          speaker: "assistant",
+          text: textChunk,
+          timestamp: minTimestamp,
+          id: responseId,
+        },
+      ];
+    });
+  }, []);
+
 
   const clearPendingAudio = useCallback((interruptAvatar = false) => {
     audioBufferRef.current = [];
@@ -90,7 +172,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     }
   }, []);
 
-  const flushAudioBuffer = useCallback(async () => {
+  const flushAudioBuffer = useCallback(async (retryCount = 0) => {
     if (!audioBufferRef.current.length || !avatarClientRef.current) {
       if (!audioBufferRef.current.length && audioFlushTimeoutRef.current) {
         clearTimeout(audioFlushTimeoutRef.current);
@@ -110,18 +192,49 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     }
 
     const payload = audioBufferRef.current.join("");
+    const payloadSize = payload.length;
+    
+    // Don't send empty or very small payloads
+    if (payloadSize < 100) {
+      console.warn("⏸️ Skipping audio flush - payload too small:", payloadSize);
+      audioBufferRef.current = [];
+      isFlushingAudioRef.current = false;
+      return;
+    }
+    
     audioBufferRef.current = [];
     isFlushingAudioRef.current = true;
 
     try {
+      console.log(`📤 Flushing audio buffer (attempt ${retryCount + 1}) - size: ${payloadSize} chars`);
       await avatarClientRef.current.speakPcmAudio(payload);
-    } catch (error) {
-      console.error("Error sending audio to avatar:", error);
+      lastAudioSentTimeRef.current = Date.now();
+      console.log("✅ Audio buffer flushed successfully");
+    } catch (error: any) {
+      const errorMessage = error?.message || String(error);
+      console.error(`❌ Error sending audio to avatar (attempt ${retryCount + 1}):`, errorMessage);
+      
+      // Retry logic: retry up to 2 times with exponential backoff
+      if (retryCount < 2 && avatarClientRef.current) {
+        const retryDelay = Math.min(100 * Math.pow(2, retryCount), 500); // 100ms, 200ms, max 500ms
+        console.log(`🔄 Retrying audio send in ${retryDelay}ms...`);
+        
+        setTimeout(() => {
+          // Put payload back in buffer for retry
+          audioBufferRef.current.unshift(payload);
+          flushAudioBuffer(retryCount + 1);
+        }, retryDelay);
+        return; // Don't mark as done yet
+      } else {
+        console.error("❌ Audio send failed after all retries - audio may be lost");
+        // Update status to show error
+        setStatus(`Audio error: ${errorMessage.substring(0, 50)}...`);
+      }
     } finally {
       isFlushingAudioRef.current = false;
       if (needsAnotherFlushRef.current) {
         needsAnotherFlushRef.current = false;
-        flushAudioBuffer();
+        flushAudioBuffer(0); // Reset retry count for next flush
       }
     }
   }, []);
@@ -131,9 +244,46 @@ export default function SessionPage({ params }: { params: { id: string } }) {
       clearTimeout(audioFlushTimeoutRef.current);
     }
     audioFlushTimeoutRef.current = setTimeout(() => {
-      flushAudioBuffer();
+      flushAudioBuffer(0);
     }, 60);
   }, [flushAudioBuffer]);
+
+  // Audio health check: monitor if audio is being sent but not confirmed
+  useEffect(() => {
+    if (!isConnected || !avatarClientRef.current) {
+      if (audioHealthCheckIntervalRef.current) {
+        clearInterval(audioHealthCheckIntervalRef.current);
+        audioHealthCheckIntervalRef.current = null;
+      }
+      return;
+    }
+
+    // Start health check interval
+    audioHealthCheckIntervalRef.current = setInterval(() => {
+      const timeSinceLastAudio = Date.now() - lastAudioSentTimeRef.current;
+      
+      // If we have audio in buffer but haven't sent anything in 5 seconds, something is wrong
+      if (audioBufferRef.current.length > 0 && timeSinceLastAudio > 5000) {
+        console.warn("⚠️ Audio health check: Audio buffer has data but nothing sent in 5s - forcing flush");
+        flushAudioBuffer(0);
+      }
+      
+      // If we're flushing but stuck for more than 10 seconds, reset
+      if (isFlushingAudioRef.current && timeSinceLastAudio > 10000) {
+        console.warn("⚠️ Audio health check: Flush stuck for 10s - resetting");
+        isFlushingAudioRef.current = false;
+        needsAnotherFlushRef.current = false;
+        flushAudioBuffer(0);
+      }
+    }, 2000); // Check every 2 seconds
+
+    return () => {
+      if (audioHealthCheckIntervalRef.current) {
+        clearInterval(audioHealthCheckIntervalRef.current);
+        audioHealthCheckIntervalRef.current = null;
+      }
+    };
+  }, [isConnected, flushAudioBuffer]);
 
   const initializeLiveAvatar = async (): Promise<boolean> => {
     if (!avatar) return false;
@@ -148,6 +298,11 @@ export default function SessionPage({ params }: { params: { id: string } }) {
         "CUSTOM",
         { enforceTurnTaking: false }
       );
+
+      // Track when avatar audio starts/stops playing (for debugging)
+      avatarClientRef.current.onAudioStateChange((isPlaying) => {
+        console.log(`🎤 Avatar audio state changed: ${isPlaying ? 'playing' : 'stopped'}`);
+      });
 
       if (videoRef.current) {
         await avatarClientRef.current.initialize(videoRef.current);
@@ -294,6 +449,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
             case "response.audio.delta":
               if (data.delta) {
                 audioBufferRef.current.push(data.delta);
+                lastAudioSentTimeRef.current = Date.now();
                 const shouldFlushImmediately =
                   !isFlushingAudioRef.current && !audioFlushTimeoutRef.current;
 
@@ -307,12 +463,10 @@ export default function SessionPage({ params }: { params: { id: string } }) {
 
             case "response.audio_transcript.delta": {
               const responseId = data.response_id || data.response?.id;
-              if (!responseId || !data.delta) break;
+              const deltaText = data.delta;
+              if (!responseId || !deltaText) break;
               
-              // Track the current response_id being transcribed
-              // If a new response starts (different response_id), the old one was interrupted
               if (currentResponseIdRef.current && currentResponseIdRef.current !== responseId) {
-                // Previous response was interrupted (didn't complete), remove it
                 const oldResponseId = currentResponseIdRef.current;
                 setTranscript(prev => prev.filter(
                   item => !(item.speaker === "assistant" && item.id === oldResponseId)
@@ -320,36 +474,11 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                 console.log(`🗑️ Removed interrupted transcript for response_id: ${oldResponseId} (new response started)`);
               }
               
-              // Always update to track the current response being transcribed
               currentResponseIdRef.current = responseId;
               
-              setTranscript(prev => {
-                const existingIndex = prev.findIndex(
-                  item => item.speaker === "assistant" && item.id === responseId
-                );
-                
-                if (existingIndex !== -1) {
-                  const updated = [...prev];
-                  updated[existingIndex] = {
-                    ...updated[existingIndex],
-                    text: updated[existingIndex].text + data.delta
-                  };
-                  return updated;
-                }
-                
-                // Use sequence counter for correct ordering
-                messageSequenceRef.current += 1;
-                
-                return [
-                  ...prev,
-                  {
-                    speaker: "assistant",
-                    text: data.delta,
-                    timestamp: messageSequenceRef.current,
-                    id: responseId,
-                  }
-                ];
-              });
+              // Show transcript immediately (no delay)
+              const eventTimestamp = data.created_at || data.timestamp;
+              upsertAssistantTranscript(responseId, deltaText, eventTimestamp);
               break;
             }
 
@@ -372,15 +501,37 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                     return updated;
                   }
                   
-                  // Use sequence counter for correct ordering
-                  messageSequenceRef.current += 1;
+                  // Use the timestamp from when user STARTED speaking, not when transcription completed
+                  // Check multiple sources for the speech start time
+                  const storedStartTime = userSpeechStartTimesRef.current.get(data.item_id);
+                  const pendingStartTime = pendingUserTranscriptRef.current?.startTime;
+                  const currentStartTime = userSpeechStartTimeRef.current;
+                  
+                  // Use the earliest available timestamp (most accurate)
+                  // Prioritize stored time, then pending, then current, then fallback to now
+                  const userTimestamp = storedStartTime || pendingStartTime || currentStartTime || Date.now();
+                  lastUserMessageTimestampRef.current = Math.max(lastUserMessageTimestampRef.current, userTimestamp);
+                  
+                  // Store this timestamp for this item_id in case assistant responses arrive first
+                  userSpeechStartTimesRef.current.set(data.item_id, userTimestamp);
+                  
+                  // Clean up tracking for this item after a delay (in case assistant responses are still coming)
+                  setTimeout(() => {
+                    userSpeechStartTimesRef.current.delete(data.item_id);
+                    if (pendingUserTranscriptRef.current?.itemId === data.item_id) {
+                      pendingUserTranscriptRef.current = null;
+                    }
+                  }, 5000); // Keep for 5 seconds to handle late-arriving assistant responses
+                  
+                  // Don't clear global speech start time immediately - it might be needed for next message
+                  // It will be updated on the next speech_started event
                   
                   return [
                     ...prev,
                     {
                       speaker: "user",
                       text: data.transcript,
-                      timestamp: messageSequenceRef.current,
+                      timestamp: userTimestamp,
                       id: data.item_id,
                     }
                   ];
@@ -390,6 +541,10 @@ export default function SessionPage({ params }: { params: { id: string } }) {
 
             case "input_audio_buffer.speech_started":
               setStatus("Listening...");
+              // Track when user starts speaking - this is the actual timestamp for their message
+              const speechStartTime = Date.now();
+              userSpeechStartTimeRef.current = speechStartTime;
+              // Don't clear pending transcript ref here - wait for item.created event to get item_id
               clearPendingAudio(true);
               break;
 
@@ -462,6 +617,10 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     setIsStarting(true);
     setError(null);
     setHasUserStartedSpeaking(false); // Reset when starting new session
+    lastUserMessageTimestampRef.current = 0; // Reset timestamp tracking
+    userSpeechStartTimeRef.current = null; // Reset speech start tracking
+    pendingUserTranscriptRef.current = null; // Reset pending transcript
+    userSpeechStartTimesRef.current.clear(); // Clear all tracked speech start times
     
     try {
       const avatarReady = await initializeLiveAvatar();
@@ -516,6 +675,12 @@ export default function SessionPage({ params }: { params: { id: string } }) {
         audioContextRef.current = null;
       }
 
+      // Stop health check
+      if (audioHealthCheckIntervalRef.current) {
+        clearInterval(audioHealthCheckIntervalRef.current);
+        audioHealthCheckIntervalRef.current = null;
+      }
+
       // End avatar session
       if (avatarClientRef.current) {
         await avatarClientRef.current.endSession();
@@ -558,16 +723,15 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     <main className="min-h-screen bg-slate-50 p-4 md:p-8">
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between bg-white border border-slate-200 px-6 py-4">
+        <div className="flex items-center justify-between bg-white border border-slate-200 px-4 py-2">
           <div>
-            <h1 className="text-2xl font-medium text-slate-900">
-              Training Session: {avatar.name}
+            <h1 className="text-sm font-medium text-slate-900">
+              Training Session: {avatar.name} <span className="text-xs text-slate-500 font-normal">- {avatar.role} - {avatar.scenario}</span>
             </h1>
-            <p className="text-sm text-slate-500 mt-1">{avatar.role} - {avatar.scenario}</p>
           </div>
           <Link
             href="/select-avatar"
-            className="px-4 py-2 text-slate-600 hover:text-slate-900 transition-colors text-sm border border-slate-200 hover:border-slate-300"
+            className="px-3 py-1 text-slate-600 hover:text-slate-900 transition-colors text-xs border border-slate-200 hover:border-slate-300"
           >
             ← Back
           </Link>
@@ -617,27 +781,30 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                   {transcript.length} {transcript.length === 1 ? "turn" : "turns"}
                 </span>
               </div>
-              <div className="bg-slate-50 p-4 min-h-[200px] max-h-[400px] overflow-y-auto">
+              <div 
+                ref={transcriptScrollRef}
+                className="bg-slate-50 p-4 min-h-[200px] max-h-[400px] overflow-y-auto"
+              >
                 {transcript.length > 0 ? (
-                  <div className="flex flex-col gap-3">
+                  <div className="space-y-3">
                     {transcript
                       .sort((a, b) => b.timestamp - a.timestamp)
                       .map((event, index) => (
                         <div
                           key={`${event.id}-${index}`}
-                          className={`p-3 text-sm ${
+                          className={`p-3 text-sm rounded-lg ${
                             event.speaker === "user"
                               ? "bg-emerald-600 text-white ml-8"
                               : "bg-white text-slate-900 mr-8 border border-slate-200"
                           }`}
                         >
                           <div className="flex items-start gap-2">
-                            <span className={`font-medium text-xs ${
+                            <span className={`font-medium text-xs whitespace-nowrap flex-shrink-0 ${
                               event.speaker === "user" ? "text-emerald-100" : "text-slate-500"
                             }`}>
                               {event.speaker === "user" ? "You" : avatar.name}:
                             </span>
-                            <span className="flex-1">{event.text}</span>
+                            <span className="flex-1 break-words">{event.text}</span>
                           </div>
                         </div>
                       ))}

@@ -5,6 +5,8 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { createLiveAvatarClient, LiveAvatarClient } from "@/lib/liveavatar";
 import { getAvatarById } from "@/lib/avatars";
 
+const AVATAR_RESPONSE_DELAY_MS = 0; // No delay - avatar responds immediately
+
 interface TranscriptItem {
   speaker: "user" | "assistant";
   text: string;
@@ -34,6 +36,7 @@ export default function TestCustomOpenAIPage() {
   const isFlushingAudioRef = useRef(false);
   const needsAnotherFlushRef = useRef(false);
   const currentResponseIdRef = useRef<string | null>(null);
+  const transcriptScrollRef = useRef<HTMLDivElement>(null);
   const avatar = getAvatarById("sarah");
 
   const formatDuration = useCallback((totalSeconds: number): string => {
@@ -58,6 +61,44 @@ export default function TestCustomOpenAIPage() {
       window.clearInterval(intervalId);
     };
   }, [connectedAt]);
+
+  // Auto-scroll transcript to bottom when new messages arrive
+  useEffect(() => {
+    if (transcriptScrollRef.current) {
+      transcriptScrollRef.current.scrollTop = transcriptScrollRef.current.scrollHeight;
+    }
+  }, [transcript]);
+
+  const upsertAssistantTranscript = useCallback((responseId: string, textChunk: string, timestamp?: number) => {
+    if (!textChunk) {
+      return;
+    }
+    setTranscript(prev => {
+      const existingIndex = prev.findIndex(
+        item => item.speaker === "assistant" && item.id === responseId
+      );
+
+      if (existingIndex !== -1) {
+        const updated = [...prev];
+        updated[existingIndex] = {
+          ...updated[existingIndex],
+          text: updated[existingIndex].text + textChunk,
+        };
+        return updated;
+      }
+
+      return [
+        ...prev,
+        {
+          speaker: "assistant",
+          text: textChunk,
+          timestamp: timestamp ?? Date.now(),
+          id: responseId,
+        },
+      ];
+    });
+  }, []);
+
 
   const clearPendingAudio = useCallback((interruptAvatar = false) => {
     audioBufferRef.current = [];
@@ -114,6 +155,7 @@ export default function TestCustomOpenAIPage() {
       await avatarClientRef.current.speakPcmAudio(payload);
     } catch (error) {
       console.error("Error sending buffered audio to avatar:", error);
+      // Don't retry if there's an error - it might be due to session disconnection
     } finally {
       isFlushingAudioRef.current = false;
       if (needsAnotherFlushRef.current) {
@@ -150,6 +192,11 @@ export default function TestCustomOpenAIPage() {
       // Set up transcript callback
       avatarClientRef.current.onTranscript((event) => {
         console.log("LiveAvatar transcript:", event);
+      });
+
+      // Track when avatar audio starts/stops playing (for debugging)
+      avatarClientRef.current.onAudioStateChange((isPlaying) => {
+        console.log(`🎤 Avatar audio state changed: ${isPlaying ? 'playing' : 'stopped'}`);
       });
 
       if (videoRef.current) {
@@ -328,7 +375,8 @@ export default function TestCustomOpenAIPage() {
 
             case "response.audio_transcript.delta": {
               const responseId = data.response_id || data.response?.id;
-              if (!responseId || !data.delta) {
+              const deltaText = data.delta;
+              if (!responseId || !deltaText) {
                 break;
               }
               
@@ -346,35 +394,9 @@ export default function TestCustomOpenAIPage() {
               // Always update to track the current response being transcribed
               currentResponseIdRef.current = responseId;
               
-              setTranscript(prev => {
-                // Find existing entry with this response_id
-                const existingIndex = prev.findIndex(
-                  item => item.speaker === "assistant" && item.id === responseId
-                );
-                
-                if (existingIndex !== -1) {
-                  // Append to existing transcript
-                  const updated = [...prev];
-                  updated[existingIndex] = {
-                    ...updated[existingIndex],
-                    text: updated[existingIndex].text + data.delta
-                  };
-                  return updated;
-                }
-                
-                // Use OpenAI's timestamp if available, otherwise use current time
-                const eventTimestamp = data.created_at || data.timestamp || Date.now();
-                
-                return [
-                  ...prev,
-                  {
-                    speaker: "assistant",
-                    text: data.delta,
-                    timestamp: eventTimestamp,
-                    id: responseId,
-                  }
-                ];
-              });
+              // Show transcript immediately (no delay)
+              const eventTimestamp = data.created_at || data.timestamp;
+              upsertAssistantTranscript(responseId, deltaText, eventTimestamp);
               break;
             }
 
@@ -591,12 +613,12 @@ export default function TestCustomOpenAIPage() {
                 <span className="text-slate-300">•</span>
                 <span>{avatar.scenario}</span>
                 <span className="text-slate-300">•</span>
-                <span className="text-slate-500">Custom agent prompt (v6)</span>
+                <span className="text-slate-500">Custom agent prompt (v{avatar.openaiPromptVersion || "1"})</span>
               </p>
             </div>
             <div className="text-right">
               <p className="text-xs uppercase text-slate-500">Prompt Version</p>
-              <p className="text-sm font-semibold text-slate-900">pmpt_692533270e8c81939cb2030024753c36043ae653ab747fbc · v6</p>
+              <p className="text-sm font-semibold text-slate-900">pmpt_692533270e8c81939cb2030024753c36043ae653ab747fbc · v{avatar.openaiPromptVersion || "1"}</p>
             </div>
           </div>
         </div>
@@ -710,11 +732,14 @@ export default function TestCustomOpenAIPage() {
                   {transcript.length} {transcript.length === 1 ? "turn" : "turns"}
                 </span>
               </div>
-              <div className="bg-slate-50 p-4 min-h-[200px] max-h-[400px] overflow-y-auto">
+              <div 
+                ref={transcriptScrollRef}
+                className="bg-slate-50 p-4 min-h-[200px] max-h-[400px] overflow-y-auto flex flex-col"
+              >
                 {transcript.length > 0 ? (
                   <div className="flex flex-col gap-3">
                     {transcript
-                      .sort((a, b) => b.timestamp - a.timestamp)
+                      .sort((a, b) => a.timestamp - b.timestamp) // Sort chronologically (oldest first)
                       .map((event, index) => (
                         <div
                           key={`${event.id}-${index}`}
@@ -775,7 +800,7 @@ export default function TestCustomOpenAIPage() {
               <div className="space-y-2">
                 <p className="text-xs uppercase text-slate-500 tracking-wide">OpenAI Prompt</p>
                 <code className="block text-xs bg-slate-100 text-slate-800 px-2 py-1 rounded">
-                  pmpt_692533270e8c81939cb2030024753c36043ae653ab747fbc · v6
+                  pmpt_692533270e8c81939cb2030024753c36043ae653ab747fbc · v{avatar.openaiPromptVersion || "1"}
                 </code>
               </div>
 
