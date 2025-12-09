@@ -19,8 +19,8 @@ export const avatars: Avatar[] = [
     avatarId: "513fd1b7-7ef9-466d-9af2-344e51eeb833",
     voiceId: "b9d23d16-9437-44d5-89c4-b4dd61c3fdc8",
     imageSrc: "/avatars/sarah-avatar.jpg",
-    openaiPromptId: "pmpt_692533270e8c81939cb2030024753c36043ae653ab747fbc",
-    openaiPromptVersion: "14",
+    openaiPromptId: "pmpt_6937af0af54c8194a222443fc44bb6ea030cfc3ca45af86f",
+    openaiPromptVersion: "9",
   },
   {
     id: "michael",
@@ -29,8 +29,8 @@ export const avatars: Avatar[] = [
     scenario: "Lost his father",
     avatarId: "55eec60c-d665-4972-a529-bbdcaf665ab8",
     imageSrc: "/avatars/michael-avatar.jpg",
-    openaiPromptId: "pmpt_69255833be5881969a360d5e2352410d0f22b7676fbf534a",
-    openaiPromptVersion: "6",
+    openaiPromptId: "pmpt_6937b0a609588193b7e17f9dfd58059c08bf87cb045b5637",
+    openaiPromptVersion: "4",
   },
 ];
 

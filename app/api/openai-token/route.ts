@@ -6,11 +6,14 @@ export async function POST(request: Request) {
     const apiKey = process.env.OPENAI_API_KEY;
     
     if (!apiKey) {
+      console.error("OPENAI_API_KEY is not set in environment variables");
       return NextResponse.json(
-        { error: "OPENAI_API_KEY not configured" },
+        { error: "OPENAI_API_KEY not configured. Please check your .env.local file and restart the dev server." },
         { status: 500 }
       );
     }
+    
+    console.log("OpenAI API key found:", apiKey.substring(0, 10) + "...");
 
     // Get avatar ID from request body
     const body = await request.json();
@@ -51,10 +54,21 @@ export async function POST(request: Request) {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      console.error("OpenAI API error:", error);
+      const errorText = await response.text();
+      let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+      try {
+        const errorJson = JSON.parse(errorText);
+        errorMessage = errorJson.error?.message || errorJson.error || errorText || errorMessage;
+      } catch {
+        errorMessage = errorText || errorMessage;
+      }
+      console.error("OpenAI API error:", {
+        status: response.status,
+        statusText: response.statusText,
+        error: errorMessage
+      });
       return NextResponse.json(
-        { error: `Failed to create OpenAI session: ${error}` },
+        { error: `Failed to create OpenAI session: ${errorMessage}` },
         { status: response.status }
       );
     }

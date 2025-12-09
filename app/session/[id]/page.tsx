@@ -57,6 +57,44 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     return `${minutes}:${seconds}`;
   }, []);
 
+  // Validate transcript to filter out background audio/video content
+  // This is purely cosmetic - only affects what's displayed, not audio processing
+  const isValidUserTranscript = useCallback((text: string): boolean => {
+    const normalized = text.trim().toLowerCase();
+    if (!normalized) return false;
+
+    // Filter out common YouTube/video outro phrases
+    const suspiciousPhrases = [
+      "thank you for watching",
+      "please post them in the comments",
+      "if you have any questions or other problems",
+      "hope you enjoyed",
+      "don't forget to subscribe",
+      "like and subscribe",
+      "hit the bell icon",
+      "thanks for watching",
+      "see you next time",
+      "until next time"
+    ];
+
+    // Check if transcript contains suspicious phrases
+    const containsSuspiciousPhrase = suspiciousPhrases.some(phrase => 
+      normalized.includes(phrase)
+    );
+
+    // Filter out very long transcripts that sound like scripts (likely background audio)
+    const isTooLong = normalized.length > 150;
+    const hasMultipleSentences = (normalized.match(/[.!?]/g) || []).length > 2;
+    
+    // Reject if it contains suspicious phrases OR is suspiciously long with multiple sentences
+    if (containsSuspiciousPhrase || (isTooLong && hasMultipleSentences)) {
+      console.warn("⚠️ Filtered suspicious transcript:", text.substring(0, 80));
+      return false;
+    }
+
+    return true;
+  }, []);
+
   useEffect(() => {
     if (!connectedAt) {
       setElapsedSeconds(0);
@@ -396,7 +434,10 @@ export default function SessionPage({ params }: { params: { id: string } }) {
       });
 
       if (!tokenResponse.ok) {
-        throw new Error("Failed to get OpenAI token");
+        const errorData = await tokenResponse.json().catch(() => ({ error: "Unknown error" }));
+        const errorMessage = errorData.error || `HTTP ${tokenResponse.status}: ${tokenResponse.statusText}`;
+        console.error("OpenAI token error:", errorMessage);
+        throw new Error(`Failed to get OpenAI token: ${errorMessage}`);
       }
 
       const tokenData = await tokenResponse.json();
@@ -484,6 +525,12 @@ export default function SessionPage({ params }: { params: { id: string } }) {
 
             case "conversation.item.input_audio_transcription.completed":
               if (data.transcript && data.item_id) {
+                // Filter out suspicious transcripts (background audio/video content)
+                // This only affects display - doesn't interfere with audio processing
+                if (!isValidUserTranscript(data.transcript)) {
+                  break; // Skip adding to transcript
+                }
+
                 // Mark that user has started speaking
                 setHasUserStartedSpeaking(true);
                 
