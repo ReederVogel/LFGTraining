@@ -20,7 +20,7 @@ export const avatars: Avatar[] = [
     voiceId: "b9d23d16-9437-44d5-89c4-b4dd61c3fdc8",
     imageSrc: "/avatars/sarah-avatar.jpg",
     openaiPromptId: "pmpt_6937af0af54c8194a222443fc44bb6ea030cfc3ca45af86f",
-    openaiPromptVersion: "18",
+    openaiPromptVersion: "19",
   },
   {
     id: "michael",
