@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { createLiveAvatarClient, LiveAvatarClient } from "@/lib/liveavatar";
 import { getAvatarById } from "@/lib/avatars";
+import { PersonalityControls } from "@/lib/prompt-builder";
 
 const AVATAR_RESPONSE_DELAY_MS = 0; // No delay - avatar responds immediately
 
@@ -27,6 +28,12 @@ export default function SessionPage({ params }: { params: { id: string } }) {
   const [connectedAt, setConnectedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [hasUserStartedSpeaking, setHasUserStartedSpeaking] = useState(false);
+  
+  // Personality controls for Sarah avatar
+  const [personalityControls, setPersonalityControls] = useState<PersonalityControls>({
+    sadnessLevel: 5,
+    angerLevel: 3,
+  });
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const avatarClientRef = useRef<LiveAvatarClient | null>(null);
@@ -232,10 +239,8 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     const payload = audioBufferRef.current.join("");
     const payloadSize = payload.length;
     
-    // Don't send empty or very small payloads
-    if (payloadSize < 100) {
-      console.warn("⏸️ Skipping audio flush - payload too small:", payloadSize);
-      audioBufferRef.current = [];
+    // Send even very small payloads; do not drop audio
+    if (payloadSize === 0) {
       isFlushingAudioRef.current = false;
       return;
     }
@@ -430,6 +435,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
         },
         body: JSON.stringify({
           avatarId: avatar.id,
+          controls: avatarId === 'sarah' ? personalityControls : undefined,
         }),
       });
 
@@ -728,19 +734,46 @@ export default function SessionPage({ params }: { params: { id: string } }) {
         audioHealthCheckIntervalRef.current = null;
       }
 
+      // Clear all audio flush timeouts
+      if (audioFlushTimeoutRef.current) {
+        clearTimeout(audioFlushTimeoutRef.current);
+        audioFlushTimeoutRef.current = null;
+      }
+
       // End avatar session
       if (avatarClientRef.current) {
         await avatarClientRef.current.endSession();
         avatarClientRef.current = null;
       }
 
+      // Clear all refs
       clearPendingAudio(false);
+      audioBufferRef.current = [];
+      isFlushingAudioRef.current = false;
+      needsAnotherFlushRef.current = false;
+      messageSequenceRef.current = 0;
+      currentResponseIdRef.current = null;
+      lastAudioSentTimeRef.current = 0;
+      lastUserMessageTimestampRef.current = 0;
+      userSpeechStartTimeRef.current = null;
+      pendingUserTranscriptRef.current = null;
+      userSpeechStartTimesRef.current.clear();
+
+      // Reset state
       setIsConnected(false);
       setConnectedAt(null);
-      setStatus("Session ended");
+      setIsStarting(false);
+      setHasUserStartedSpeaking(false);
+      setTranscript([]);
+      setError(null);
+      setStatus("Ready to start");
+      
+      console.log("✅ Session ended and fully reset - ready to start new session");
     } catch (error) {
       console.error("Error ending session:", error);
-      setStatus("Session ended with errors");
+      setStatus("Session ended - Ready to start");
+      setIsConnected(false);
+      setConnectedAt(null);
     }
   };
 
@@ -869,6 +902,90 @@ export default function SessionPage({ params }: { params: { id: string } }) {
 
           {/* Right Column - Status & Controls */}
           <div className="space-y-6">
+            {/* Personality Controls - Only for Sarah and before session starts */}
+            {avatarId === 'sarah' && !isConnected && (
+              <div className="bg-white border border-slate-200 p-6 space-y-5">
+                <div>
+                  <h2 className="text-lg font-medium text-slate-900">Avatar Controls</h2>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Configure {avatar.name}'s emotional state for this session
+                  </p>
+                </div>
+
+                {/* Sadness Level */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-slate-700">
+                      Sadness Level
+                    </label>
+                    <span className="text-sm font-mono text-slate-900 bg-slate-100 px-2 py-0.5 rounded">
+                      {personalityControls.sadnessLevel}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="10"
+                    value={personalityControls.sadnessLevel}
+                    onChange={(e) => setPersonalityControls(prev => ({
+                      ...prev,
+                      sadnessLevel: Number(e.target.value)
+                    }))}
+                    className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                  />
+                  <div className="flex justify-between text-xs text-slate-500">
+                    <span>Not sad</span>
+                    <span>Very sad</span>
+                  </div>
+                </div>
+
+                {/* Anger Level */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-slate-700">
+                      Anger
+                    </label>
+                    <span className="text-sm font-mono text-slate-900 bg-slate-100 px-2 py-0.5 rounded">
+                      {personalityControls.angerLevel}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="10"
+                    value={personalityControls.angerLevel}
+                    onChange={(e) => setPersonalityControls(prev => ({
+                      ...prev,
+                      angerLevel: Number(e.target.value)
+                    }))}
+                    className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                  />
+                  <div className="flex justify-between text-xs text-slate-500">
+                    <span>Calm</span>
+                    <span>Angry</span>
+                  </div>
+                </div>
+
+                              </div>
+            )}
+
+            {/* Show personality summary during session */}
+            {avatarId === 'sarah' && isConnected && (
+              <div className="bg-white border border-slate-200 p-4">
+                <h3 className="text-sm font-medium text-slate-900 mb-2">Active Settings</h3>
+                <div className="space-y-1 text-xs text-slate-600">
+                  <div className="flex justify-between">
+                    <span>Sadness:</span>
+                    <span className="font-mono font-medium text-slate-900">{personalityControls.sadnessLevel}/10</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Anger:</span>
+                    <span className="font-mono font-medium text-slate-900">{personalityControls.angerLevel}/10</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Connection Status */}
             <div className="bg-white border border-slate-200 p-6 space-y-5">
               <div>

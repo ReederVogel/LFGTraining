@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAvatarById } from "@/lib/avatars";
+import { buildSarahPrompt, PersonalityControls } from "@/lib/prompt-builder";
 
 export async function POST(request: Request) {
   try {
@@ -15,9 +16,10 @@ export async function POST(request: Request) {
     
     console.log("OpenAI API key found:", apiKey.substring(0, 10) + "...");
 
-    // Get avatar ID from request body
+    // Get avatar ID and personality controls from request body
     const body = await request.json();
     const avatarId = body.avatarId;
+    const controls: PersonalityControls | undefined = body.controls;
 
     if (!avatarId) {
       return NextResponse.json(
@@ -29,15 +31,39 @@ export async function POST(request: Request) {
     // Get avatar configuration
     const avatar = getAvatarById(avatarId);
     
-    if (!avatar || !avatar.openaiPromptId) {
+    if (!avatar) {
       return NextResponse.json(
-        { error: "Avatar not found or OpenAI prompt not configured" },
+        { error: "Avatar not found" },
         { status: 404 }
       );
     }
 
+    // Build session configuration based on avatar and controls
+    let sessionConfig: any = {
+      model: "gpt-4o-realtime-preview-2024-12-17",
+      voice: "shimmer" // Female voice for Sarah (warm, natural)
+    };
+    
+    if (avatarId === 'sarah' && controls) {
+      // Use dynamic instructions for Sarah with personality controls
+      console.log("Using dynamic instructions for Sarah with controls:", controls);
+      const dynamicPrompt = buildSarahPrompt(controls);
+      sessionConfig.instructions = dynamicPrompt;
+    } else if (avatar.openaiPromptId) {
+      // Use dashboard prompt for other avatars or if no controls
+      console.log("Using dashboard prompt ID:", avatar.openaiPromptId);
+      sessionConfig.prompt = {
+        id: avatar.openaiPromptId,
+        version: avatar.openaiPromptVersion || "1"
+      };
+    } else {
+      return NextResponse.json(
+        { error: "No prompt configuration available for this avatar" },
+        { status: 400 }
+      );
+    }
+
     // Create ephemeral token for OpenAI Realtime API
-    // Using the avatar's pre-configured prompt from platform.openai.com
     const response = await fetch("https://api.openai.com/v1/realtime/sessions", {
       method: "POST",
       headers: {
@@ -45,12 +71,7 @@ export async function POST(request: Request) {
         "Content-Type": "application/json",
         "OpenAI-Beta": "realtime=v1",
       },
-      body: JSON.stringify({
-        prompt: {
-          id: avatar.openaiPromptId,
-          version: avatar.openaiPromptVersion || "1"
-        }
-      }),
+      body: JSON.stringify(sessionConfig),
     });
 
     if (!response.ok) {
