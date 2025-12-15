@@ -239,8 +239,13 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     const payload = audioBufferRef.current.join("");
     const payloadSize = payload.length;
     
-    // Send even very small payloads; do not drop audio
-    if (payloadSize === 0) {
+    // Minimum threshold: 50 chars of base64 ≈ 37 bytes ≈ 18 PCM samples ≈ 0.75ms of audio
+    // This filters out meaningless fragments while allowing legitimate small chunks
+    // Empty or too-small payloads are not worth sending and could cause issues
+    if (payloadSize < 50) {
+      if (payloadSize > 0) {
+        console.log(`⚠️ Skipping too-small audio payload (${payloadSize} chars < 50 minimum)`);
+      }
       isFlushingAudioRef.current = false;
       return;
     }
