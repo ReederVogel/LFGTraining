@@ -9,12 +9,35 @@ import { PersonalityControls } from "@/lib/prompt-builder";
 
 const AVATAR_RESPONSE_DELAY_MS = 0; // No delay - avatar responds immediately
 
+// LiveAvatar CUSTOM mode uses `repeatAudio()` under the hood (see `lib/liveavatar.ts`),
+// which can behave like a restart if called too frequently. To prevent the common
+// "hel hello..." stutter, we pre-buffer the start of each assistant audio stream
+// and throttle subsequent sends.
+const AUDIO_FLUSH_DEBOUNCE_MS = 150;
+const AUDIO_MIN_FIRST_FLUSH_CHARS = 40000; // ~600ms buffer before first send (smoother start)
+const AUDIO_MIN_NEXT_FLUSH_CHARS = 32000; // bigger subsequent chunks
+const AUDIO_MIN_SEND_INTERVAL_MS = 300; // more spacing between sends
+const AUDIO_MAX_WAIT_FIRST_MS = 700; // allow more time to collect initial audio
+const AUDIO_MAX_WAIT_NEXT_MS = 600;
+
 interface TranscriptItem {
   speaker: "user" | "assistant";
   text: string;
   timestamp: number;
   id: string;
 }
+
+const STAGE_DIRECTION_REGEX = /(\((?:[^)]{0,40})(deep\s*breath|breath(?:es|ing)?|sigh(?:s|ing)?|sniff(?:le|les|ling)?|sob(?:s|bing)?|cry(?:ing|ies)?|chok(?:e|es)\s*up|clear(?:s)?\s*(?:my\s*)?throat|gasp(?:s|ing)?|inhale(?:s|d|ing)?|exhale(?:s|d|ing)?|pause(?:s|d|ing)?)(?:[^)]{0,40})\))|(\[(?:[^\]]{0,40})(deep\s*breath|breath(?:es|ing)?|sigh(?:s|ing)?|sniff(?:le|les|ling)?|sob(?:s|bing)?|cry(?:ing|ies)?|chok(?:e|es)\s*up|clear(?:s)?\s*(?:my\s*)?throat|gasp(?:s|ing)?|inhale(?:s|d|ing)?|exhale(?:s|d|ing)?|pause(?:s|d|ing)?)(?:[^\]]{0,40})\])|(\*(?:[^*]{0,40})(deep\s*breath|breath(?:es|ing)?|sigh(?:s|ing)?|sniff(?:le|les|ling)?|sob(?:s|bing)?|cry(?:ing|ies)?|chok(?:e|es)\s*up|clear(?:s)?\s*(?:my\s*)?throat|gasp(?:s|ing)?|inhale(?:s|d|ing)?|exhale(?:s|d|ing)?|pause(?:s|d|ing)?)(?:[^*]{0,40})\*)/gi;
+
+const sanitizeAssistantUtterance = (text: string): string => {
+  if (!text) return text;
+  const withoutStageDirections = text.replace(STAGE_DIRECTION_REGEX, " ");
+  return withoutStageDirections
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.!?;:])/g, "$1")
+    .replace(/\(\s*\)/g, "")
+    .trim();
+};
 
 export default function SessionPage({ params }: { params: { id: string } }) {
   const avatarId = params.id;
@@ -29,11 +52,24 @@ export default function SessionPage({ params }: { params: { id: string } }) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [hasUserStartedSpeaking, setHasUserStartedSpeaking] = useState(false);
   
-  // Personality controls for Sarah avatar
+  // Personality controls for Sarah avatar (5 levels: 1-5)
   const [personalityControls, setPersonalityControls] = useState<PersonalityControls>({
-    sadnessLevel: 5,
-    angerLevel: 3,
+    sadnessLevel: 3,  // Default: Moderate sadness
+    angerLevel: 2,    // Default: Mild caution
+    accentType: 'none',  // Default: No accent
+    accentStrength: 0,   // Default: No accent strength
   });
+
+  const getAccentDisplayName = (
+    accentType: PersonalityControls["accentType"] | undefined
+  ): string => {
+    if (!accentType || accentType === "none") return "None (Standard English)";
+    if (accentType === "louisiana-cajun") return "Louisiana-Cajun";
+    if (accentType === "texas-southern") return "Texas Southern";
+    if (accentType === "indian-english") return "Indian";
+    if (accentType === "russian-english") return "Russian";
+    return String(accentType);
+  };
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const avatarClientRef = useRef<LiveAvatarClient | null>(null);
@@ -43,18 +79,33 @@ export default function SessionPage({ params }: { params: { id: string } }) {
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const audioBufferRef = useRef<string[]>([]);
+  const audioBufferedCharsRef = useRef<number>(0);
   const audioFlushTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isFlushingAudioRef = useRef(false);
   const needsAnotherFlushRef = useRef(false);
+  const audioHasStartedRef = useRef(false);
+  const audioFirstDeltaAtRef = useRef<number | null>(null);
+  const lastAvatarAudioSendAtRef = useRef<number>(0);
   const messageSequenceRef = useRef(0);
   const currentResponseIdRef = useRef<string | null>(null);
+  const currentAudioResponseIdRef = useRef<string | null>(null);
   const lastAudioSentTimeRef = useRef<number>(0);
   const audioHealthCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isAvatarAudioPlayingRef = useRef<boolean>(false);
+  const pendingInterruptTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastInterruptAtRef = useRef<number>(0);
   const lastUserMessageTimestampRef = useRef<number>(0);
   const userSpeechStartTimeRef = useRef<number | null>(null);
   const pendingUserTranscriptRef = useRef<{ itemId: string; startTime: number } | null>(null);
   // Map item_id to speech start time to handle multiple concurrent speech events
   const userSpeechStartTimesRef = useRef<Map<string, number>>(new Map());
+  const audioStatsRef = useRef<Map<string, { deltaCount: number; totalChars: number; lastAt: number }>>(
+    new Map()
+  );
+  const transcriptStatsRef = useRef<Map<string, { deltaCount: number; totalChars: number; lastAt: number }>>(
+    new Map()
+  );
+  const assistantTextTailRef = useRef<Map<string, string>>(new Map());
 
   const formatDuration = useCallback((totalSeconds: number): string => {
     const minutes = Math.floor(totalSeconds / 60)
@@ -142,9 +193,11 @@ export default function SessionPage({ params }: { params: { id: string } }) {
 
       if (existingIndex !== -1) {
         const updated = [...prev];
+        const nextText = sanitizeAssistantUtterance(updated[existingIndex].text + textChunk);
+        assistantTextTailRef.current.set(responseId, nextText.slice(-80));
         updated[existingIndex] = {
           ...updated[existingIndex],
-          text: updated[existingIndex].text + textChunk,
+          text: nextText,
         };
         return updated;
       }
@@ -180,7 +233,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
         ...prev,
         {
           speaker: "assistant",
-          text: textChunk,
+          text: sanitizeAssistantUtterance(textChunk),
           timestamp: minTimestamp,
           id: responseId,
         },
@@ -192,6 +245,10 @@ export default function SessionPage({ params }: { params: { id: string } }) {
   const clearPendingAudio = useCallback((interruptAvatar = false) => {
     audioBufferRef.current = [];
     needsAnotherFlushRef.current = false;
+    audioBufferedCharsRef.current = 0;
+    audioHasStartedRef.current = false;
+    audioFirstDeltaAtRef.current = null;
+    lastAvatarAudioSendAtRef.current = 0;
     if (audioFlushTimeoutRef.current) {
       clearTimeout(audioFlushTimeoutRef.current);
       audioFlushTimeoutRef.current = null;
@@ -217,7 +274,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     }
   }, []);
 
-  const flushAudioBuffer = useCallback(async (retryCount = 0) => {
+  const flushAudioBuffer = useCallback(async (force = false, retryCount = 0) => {
     if (!audioBufferRef.current.length || !avatarClientRef.current) {
       if (!audioBufferRef.current.length && audioFlushTimeoutRef.current) {
         clearTimeout(audioFlushTimeoutRef.current);
@@ -236,8 +293,25 @@ export default function SessionPage({ params }: { params: { id: string } }) {
       audioFlushTimeoutRef.current = null;
     }
 
+    const now = Date.now();
+    const minChars = audioHasStartedRef.current
+      ? AUDIO_MIN_NEXT_FLUSH_CHARS
+      : AUDIO_MIN_FIRST_FLUSH_CHARS;
+    const maxWaitMs = audioHasStartedRef.current ? AUDIO_MAX_WAIT_NEXT_MS : AUDIO_MAX_WAIT_FIRST_MS;
+    const firstDeltaAt = audioFirstDeltaAtRef.current ?? now;
+    const bufferedChars = audioBufferedCharsRef.current;
+
+    // If we haven't buffered enough yet, debounce and wait a bit longer (unless forced).
+    if (!force && bufferedChars > 0 && bufferedChars < minChars && now - firstDeltaAt < maxWaitMs) {
+      audioFlushTimeoutRef.current = setTimeout(() => {
+        flushAudioBuffer(false, 0);
+      }, AUDIO_FLUSH_DEBOUNCE_MS);
+      return;
+    }
+
     const payload = audioBufferRef.current.join("");
     const payloadSize = payload.length;
+    const responseIdForFlush = currentAudioResponseIdRef.current;
     
     // Send even very small payloads; do not drop audio
     if (payloadSize === 0) {
@@ -246,16 +320,28 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     }
     
     audioBufferRef.current = [];
+    audioBufferedCharsRef.current = 0;
     isFlushingAudioRef.current = true;
+    audioHasStartedRef.current = true;
+    lastAvatarAudioSendAtRef.current = now;
 
+    const flushStart = Date.now();
     try {
       console.log(`📤 Flushing audio buffer (attempt ${retryCount + 1}) - size: ${payloadSize} chars`);
+      if (force || payloadSize < 20000) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/bd86f80f-0f18-4670-92ee-7cb26cc4fc5e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B',location:'app/session/[id]/page.tsx:flushAudioBuffer:beforeSend',message:'flush_audio_send',data:{force,retryCount,responseId:responseIdForFlush,payloadSize,bufferedCharsBefore:bufferedChars,bufferParts:audioBufferRef.current.length},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+      }
       await avatarClientRef.current.speakPcmAudio(payload);
       lastAudioSentTimeRef.current = Date.now();
       console.log("✅ Audio buffer flushed successfully");
     } catch (error: any) {
       const errorMessage = error?.message || String(error);
       console.error(`❌ Error sending audio to avatar (attempt ${retryCount + 1}):`, errorMessage);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/bd86f80f-0f18-4670-92ee-7cb26cc4fc5e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'C',location:'app/session/[id]/page.tsx:flushAudioBuffer:catch',message:'flush_audio_error',data:{force,retryCount,responseId:responseIdForFlush,payloadSize,errorMessage},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       
       // Retry logic: retry up to 2 times with exponential backoff
       if (retryCount < 2 && avatarClientRef.current) {
@@ -265,7 +351,8 @@ export default function SessionPage({ params }: { params: { id: string } }) {
         setTimeout(() => {
           // Put payload back in buffer for retry
           audioBufferRef.current.unshift(payload);
-          flushAudioBuffer(retryCount + 1);
+          audioBufferedCharsRef.current += payload.length;
+          flushAudioBuffer(force, retryCount + 1);
         }, retryDelay);
         return; // Don't mark as done yet
       } else {
@@ -277,7 +364,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
       isFlushingAudioRef.current = false;
       if (needsAnotherFlushRef.current) {
         needsAnotherFlushRef.current = false;
-        flushAudioBuffer(0); // Reset retry count for next flush
+        flushAudioBuffer(false, 0); // Reset retry count for next flush
       }
     }
   }, []);
@@ -287,8 +374,8 @@ export default function SessionPage({ params }: { params: { id: string } }) {
       clearTimeout(audioFlushTimeoutRef.current);
     }
     audioFlushTimeoutRef.current = setTimeout(() => {
-      flushAudioBuffer(0);
-    }, 60);
+      flushAudioBuffer(false, 0);
+    }, AUDIO_FLUSH_DEBOUNCE_MS);
   }, [flushAudioBuffer]);
 
   // Audio health check: monitor if audio is being sent but not confirmed
@@ -308,7 +395,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
       // If we have audio in buffer but haven't sent anything in 5 seconds, something is wrong
       if (audioBufferRef.current.length > 0 && timeSinceLastAudio > 5000) {
         console.warn("⚠️ Audio health check: Audio buffer has data but nothing sent in 5s - forcing flush");
-        flushAudioBuffer(0);
+        flushAudioBuffer(true, 0);
       }
       
       // If we're flushing but stuck for more than 10 seconds, reset
@@ -316,7 +403,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
         console.warn("⚠️ Audio health check: Flush stuck for 10s - resetting");
         isFlushingAudioRef.current = false;
         needsAnotherFlushRef.current = false;
-        flushAudioBuffer(0);
+        flushAudioBuffer(true, 0);
       }
     }, 2000); // Check every 2 seconds
 
@@ -344,6 +431,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
 
       // Track when avatar audio starts/stops playing (for debugging)
       avatarClientRef.current.onAudioStateChange((isPlaying) => {
+        isAvatarAudioPlayingRef.current = isPlaying;
         console.log(`🎤 Avatar audio state changed: ${isPlaying ? 'playing' : 'stopped'}`);
       });
 
@@ -427,6 +515,8 @@ export default function SessionPage({ params }: { params: { id: string } }) {
 
     try {
       setStatus("Connecting to OpenAI...");
+
+      const tokenFetchStartedAt = Date.now();
       
       const tokenResponse = await fetch("/api/openai-token", {
         method: "POST",
@@ -453,8 +543,11 @@ export default function SessionPage({ params }: { params: { id: string } }) {
         throw new Error("No client secret in response");
       }
 
+      const tokenFetchMs = Date.now() - tokenFetchStartedAt;
+      const wsCreateAt = Date.now();
+
       const ws = new WebSocket(
-        "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17",
+        "wss://api.openai.com/v1/realtime?model=gpt-realtime",
         [
           "realtime",
           "openai-beta.realtime-v1",
@@ -467,6 +560,9 @@ export default function SessionPage({ params }: { params: { id: string } }) {
       return new Promise((resolve, reject) => {
         ws.onopen = async () => {
           setStatus("Connected to OpenAI ✓");
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/bd86f80f-0f18-4670-92ee-7cb26cc4fc5e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix-v2',hypothesisId:'E',location:'app/session/[id]/page.tsx:ws.onopen:v2',message:'instrumentation_active_v2',data:{avatarId},timestamp:Date.now()})}).catch(()=>{});
+          // #endregion
           
           // Only configure technical settings (transcription)
           // Don't override instructions or voice - let the prompt handle that
@@ -474,7 +570,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
             type: "session.update",
             session: {
               input_audio_transcription: {
-                model: "whisper-1",
+                model: "gpt-4o-mini-transcribe-2025-12-15",
               },
             },
           }));
@@ -495,13 +591,33 @@ export default function SessionPage({ params }: { params: { id: string } }) {
           switch (data.type) {
             case "response.audio.delta":
               if (data.delta) {
+                const audioResponseId = data.response_id || data.response?.id || currentAudioResponseIdRef.current;
+                if (audioResponseId) {
+                  currentAudioResponseIdRef.current = audioResponseId;
+                  const stats = audioStatsRef.current.get(audioResponseId) || { deltaCount: 0, totalChars: 0, lastAt: 0 };
+                  const deltaChars = typeof data.delta === "string" ? data.delta.length : 0;
+                  stats.deltaCount += 1;
+                  stats.totalChars += deltaChars;
+                  stats.lastAt = Date.now();
+                  audioStatsRef.current.set(audioResponseId, stats);
+                }
                 audioBufferRef.current.push(data.delta);
+                audioBufferedCharsRef.current += typeof data.delta === "string" ? data.delta.length : 0;
+                if (!audioFirstDeltaAtRef.current) {
+                  audioFirstDeltaAtRef.current = Date.now();
+                }
                 lastAudioSentTimeRef.current = Date.now();
-                const shouldFlushImmediately =
-                  !isFlushingAudioRef.current && !audioFlushTimeoutRef.current;
 
-                if (shouldFlushImmediately || audioBufferRef.current.length >= 2) {
-                  await flushAudioBuffer();
+                // Throttle sends to reduce `repeatAudio()` restart artifacts (the "hel hello" issue).
+                const now = Date.now();
+                const minChars = audioHasStartedRef.current
+                  ? AUDIO_MIN_NEXT_FLUSH_CHARS
+                  : AUDIO_MIN_FIRST_FLUSH_CHARS;
+                const enoughData = audioBufferedCharsRef.current >= minChars;
+                const intervalOk = now - lastAvatarAudioSendAtRef.current >= AUDIO_MIN_SEND_INTERVAL_MS;
+
+                if (enoughData && intervalOk) {
+                  void flushAudioBuffer(false, 0);
                 } else {
                   scheduleAudioFlush();
                 }
@@ -512,6 +628,13 @@ export default function SessionPage({ params }: { params: { id: string } }) {
               const responseId = data.response_id || data.response?.id;
               const deltaText = data.delta;
               if (!responseId || !deltaText) break;
+
+              const tStats =
+                transcriptStatsRef.current.get(responseId) || { deltaCount: 0, totalChars: 0, lastAt: 0 };
+              tStats.deltaCount += 1;
+              tStats.totalChars += typeof deltaText === "string" ? deltaText.length : 0;
+              tStats.lastAt = Date.now();
+              transcriptStatsRef.current.set(responseId, tStats);
               
               if (currentResponseIdRef.current && currentResponseIdRef.current !== responseId) {
                 const oldResponseId = currentResponseIdRef.current;
@@ -597,22 +720,73 @@ export default function SessionPage({ params }: { params: { id: string } }) {
               // Track when user starts speaking - this is the actual timestamp for their message
               const speechStartTime = Date.now();
               userSpeechStartTimeRef.current = speechStartTime;
-              // Don't clear pending transcript ref here - wait for item.created event to get item_id
-              clearPendingAudio(true);
+              // Debounce interrupts: VAD can false-trigger on noise / feedback.
+              // Only interrupt if the avatar is actually playing (or we have pending assistant audio),
+              // and only after a short delay (to avoid micro-blips).
+              if (pendingInterruptTimeoutRef.current) {
+                clearTimeout(pendingInterruptTimeoutRef.current);
+                pendingInterruptTimeoutRef.current = null;
+              }
+              pendingInterruptTimeoutRef.current = setTimeout(() => {
+                pendingInterruptTimeoutRef.current = null;
+                const now = Date.now();
+                // Only consider "pending assistant audio" if we actually have audio to play/send.
+                // Transcript deltas can arrive even when no audio is buffered yet; using transcript
+                // activity here can cause false interrupts (transcript continues but avatar audio stops).
+                const hasPendingAssistantAudio =
+                  audioHasStartedRef.current || audioBufferRef.current.length > 0;
+                const avatarIsPlaying = isAvatarAudioPlayingRef.current;
+                const cooldownOk = now - lastInterruptAtRef.current > 800;
+
+                if ((avatarIsPlaying || hasPendingAssistantAudio) && cooldownOk) {
+                  // #region agent log
+                  fetch('http://127.0.0.1:7242/ingest/bd86f80f-0f18-4670-92ee-7cb26cc4fc5e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A',location:'app/session/[id]/page.tsx:input_audio_buffer.speech_started:interrupt',message:'vad_interrupt_triggered',data:{avatarIsPlaying,hasPendingAssistantAudio,cooldownOk,responseId:currentAudioResponseIdRef.current,bufferParts:audioBufferRef.current.length,bufferedChars:audioBufferedCharsRef.current},timestamp:Date.now()})}).catch(()=>{});
+                  // #endregion
+                  lastInterruptAtRef.current = now;
+                  clearPendingAudio(true);
+                } else {
+                  // #region agent log
+                  fetch('http://127.0.0.1:7242/ingest/bd86f80f-0f18-4670-92ee-7cb26cc4fc5e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A',location:'app/session/[id]/page.tsx:input_audio_buffer.speech_started:skip',message:'vad_interrupt_skipped',data:{avatarIsPlaying,hasPendingAssistantAudio,cooldownOk,responseId:currentAudioResponseIdRef.current,bufferParts:audioBufferRef.current.length,bufferedChars:audioBufferedCharsRef.current},timestamp:Date.now()})}).catch(()=>{});
+                  // #endregion
+                  // Don't nuke audio on likely false triggers.
+                  console.log("⏸️ Skipping interrupt (likely VAD noise):", {
+                    avatarIsPlaying,
+                    hasPendingAssistantAudio,
+                    cooldownMs: now - lastInterruptAtRef.current,
+                  });
+                }
+              }, 250);
               break;
 
             case "input_audio_buffer.speech_stopped":
               setStatus("Processing...");
+              if (pendingInterruptTimeoutRef.current) {
+                clearTimeout(pendingInterruptTimeoutRef.current);
+                pendingInterruptTimeoutRef.current = null;
+              }
               break;
 
             case "response.done":
             case "response.completed":
             case "response.output_audio.done":
-              await flushAudioBuffer();
+              {
+                const doneResponseId = data.response_id || data.response?.id || currentAudioResponseIdRef.current;
+                const a = doneResponseId ? audioStatsRef.current.get(doneResponseId) : undefined;
+                const t = doneResponseId ? transcriptStatsRef.current.get(doneResponseId) : undefined;
+                const tail = doneResponseId ? assistantTextTailRef.current.get(doneResponseId) : undefined;
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/bd86f80f-0f18-4670-92ee-7cb26cc4fc5e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix-v2',hypothesisId:'D',location:'app/session/[id]/page.tsx:response.done:v2',message:'response_done_snapshot_v2',data:{responseId:doneResponseId,eventType:data.type,audioDeltaCount:a?.deltaCount ?? null,audioTotalChars:a?.totalChars ?? null,msSinceLastAudioDelta:a?.lastAt ? Date.now()-a.lastAt : null,transcriptDeltaCount:t?.deltaCount ?? null,transcriptTotalChars:t?.totalChars ?? null,msSinceLastTranscriptDelta:t?.lastAt ? Date.now()-t.lastAt : null,bufferParts:audioBufferRef.current.length,bufferedChars:audioBufferedCharsRef.current,audioHasStarted:audioHasStartedRef.current,isAvatarPlaying:isAvatarAudioPlayingRef.current,assistantTail:tail ?? null},timestamp:Date.now()})}).catch(()=>{});
+                // #endregion
+              }
+              await flushAudioBuffer(true, 0);
               // Mark audio as finished in LiveAvatar
               if (avatarClientRef.current) {
                 avatarClientRef.current.markAudioFinished();
               }
+              // Reset stream tracking for the next response
+              audioHasStartedRef.current = false;
+              audioFirstDeltaAtRef.current = null;
+              lastAvatarAudioSendAtRef.current = 0;
               // Clear current response_id tracking when response completes successfully
               currentResponseIdRef.current = null;
               setStatus("Ready - Start speaking!");
@@ -739,6 +913,10 @@ export default function SessionPage({ params }: { params: { id: string } }) {
         clearTimeout(audioFlushTimeoutRef.current);
         audioFlushTimeoutRef.current = null;
       }
+      if (pendingInterruptTimeoutRef.current) {
+        clearTimeout(pendingInterruptTimeoutRef.current);
+        pendingInterruptTimeoutRef.current = null;
+      }
 
       // End avatar session
       if (avatarClientRef.current) {
@@ -749,11 +927,17 @@ export default function SessionPage({ params }: { params: { id: string } }) {
       // Clear all refs
       clearPendingAudio(false);
       audioBufferRef.current = [];
+      audioBufferedCharsRef.current = 0;
       isFlushingAudioRef.current = false;
       needsAnotherFlushRef.current = false;
+      audioHasStartedRef.current = false;
+      audioFirstDeltaAtRef.current = null;
+      lastAvatarAudioSendAtRef.current = 0;
       messageSequenceRef.current = 0;
       currentResponseIdRef.current = null;
       lastAudioSentTimeRef.current = 0;
+      isAvatarAudioPlayingRef.current = false;
+      lastInterruptAtRef.current = 0;
       lastUserMessageTimestampRef.current = 0;
       userSpeechStartTimeRef.current = null;
       pendingUserTranscriptRef.current = null;
@@ -803,7 +987,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     <main className="min-h-screen bg-slate-50 p-4 md:p-8">
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between bg-white border border-slate-200 px-4 py-2">
+        <div className="flex items-center justify-between rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white px-4 py-2 shadow-sm">
           <div>
             <h1 className="text-sm font-medium text-slate-900">
               Training Session: {avatar.name} <span className="text-xs text-slate-500 font-normal">- {avatar.role} - {avatar.scenario}</span>
@@ -822,7 +1006,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
           {/* Left Column - Avatar Video */}
           <div className="lg:col-span-2 space-y-6">
             {/* Video Container */}
-            <div className="bg-white border border-slate-200">
+            <div className="rounded-2xl overflow-hidden border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white shadow-sm">
               <div className="relative w-full aspect-video bg-slate-900">
                 <video
                   ref={videoRef}
@@ -854,7 +1038,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
             </div>
 
             {/* Transcript */}
-            <div className="bg-white border border-slate-200 p-6">
+            <div className="rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white p-6 shadow-sm">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-medium text-slate-900">Transcript</h2>
                 <span className="text-xs text-slate-500 uppercase tracking-wide">
@@ -904,90 +1088,155 @@ export default function SessionPage({ params }: { params: { id: string } }) {
           <div className="space-y-6">
             {/* Personality Controls - Only for Sarah and before session starts */}
             {avatarId === 'sarah' && !isConnected && (
-              <div className="bg-white border border-slate-200 p-6 space-y-5">
-                <div>
-                  <h2 className="text-lg font-medium text-slate-900">Avatar Controls</h2>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Configure {avatar.name}'s emotional state for this session
-                  </p>
+              <div className="rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white p-6 shadow-sm backdrop-blur space-y-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">Avatar Controls</h2>
+                  </div>
+                  <div className="text-[11px] text-slate-500 leading-tight text-right">
+                    Set before starting
+                    <div className="text-slate-400">Locked during session</div>
+                  </div>
                 </div>
 
                 {/* Sadness Level */}
-                <div className="space-y-2">
+                <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="text-sm font-medium text-slate-700">
-                      Sadness Level
+                      Sadness
                     </label>
-                    <span className="text-sm font-mono text-slate-900 bg-slate-100 px-2 py-0.5 rounded">
-                      {personalityControls.sadnessLevel}
+                    <span className="text-xs font-mono text-slate-900 bg-white border border-slate-200/70 px-2 py-0.5 rounded-full">
+                      {personalityControls.sadnessLevel}/5
                     </span>
                   </div>
                   <input
                     type="range"
-                    min="0"
-                    max="10"
+                    min="1"
+                    max="5"
+                    step="1"
                     value={personalityControls.sadnessLevel}
                     onChange={(e) => setPersonalityControls(prev => ({
                       ...prev,
                       sadnessLevel: Number(e.target.value)
                     }))}
-                    className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                    className="w-full h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                    aria-label="Sadness level"
                   />
-                  <div className="flex justify-between text-xs text-slate-500">
-                    <span>Not sad</span>
-                    <span>Very sad</span>
-                  </div>
                 </div>
 
                 {/* Anger Level */}
-                <div className="space-y-2">
+                <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="text-sm font-medium text-slate-700">
                       Anger
                     </label>
-                    <span className="text-sm font-mono text-slate-900 bg-slate-100 px-2 py-0.5 rounded">
-                      {personalityControls.angerLevel}
+                    <span className="text-xs font-mono text-slate-900 bg-white border border-slate-200/70 px-2 py-0.5 rounded-full">
+                      {personalityControls.angerLevel}/5
                     </span>
                   </div>
                   <input
                     type="range"
-                    min="0"
-                    max="10"
+                    min="1"
+                    max="5"
+                    step="1"
                     value={personalityControls.angerLevel}
                     onChange={(e) => setPersonalityControls(prev => ({
                       ...prev,
                       angerLevel: Number(e.target.value)
                     }))}
-                    className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                    className="w-full h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                    aria-label="Anger level"
                   />
-                  <div className="flex justify-between text-xs text-slate-500">
-                    <span>Calm</span>
-                    <span>Angry</span>
-                  </div>
                 </div>
+
+                {/* Accent Type Selection */}
+                <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-slate-700">
+                      Accent
+                    </label>
+                    <span className="text-xs font-medium text-slate-600">
+                      {getAccentDisplayName(personalityControls.accentType)}
+                    </span>
+                  </div>
+                  <select
+                    value={personalityControls.accentType || 'none'}
+                    onChange={(e) => setPersonalityControls(prev => ({
+                      ...prev,
+                      accentType: e.target.value as 'none' | 'louisiana-cajun' | 'texas-southern' | 'indian-english' | 'russian-english',
+                      // If an accent is selected but strength is still 0, default to a heavy accent for training realism.
+                      accentStrength: e.target.value === 'none'
+                        ? 0
+                        : (prev.accentStrength && prev.accentStrength > 0 ? prev.accentStrength : 5)
+                    }))}
+                    className="w-full px-3 py-2 text-sm border border-slate-300/80 rounded-xl bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                    aria-label="Accent type"
+                  >
+                    <option value="none">None (Standard English)</option>
+                    <option value="louisiana-cajun">Louisiana-Cajun</option>
+                    <option value="texas-southern">Texas Southern</option>
+                    <option value="indian-english">Indian</option>
+                    <option value="russian-english">Russian</option>
+                  </select>
+                </div>
+
+                {/* Accent Strength - Only show if accent type is selected */}
+                {personalityControls.accentType && personalityControls.accentType !== 'none' && (
+                  <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-medium text-slate-700">
+                        Accent Strength
+                      </label>
+                      <span className="text-xs font-mono text-slate-900 bg-white border border-slate-200/70 px-2 py-0.5 rounded-full">
+                        {personalityControls.accentStrength || 0}/5
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="5"
+                      step="1"
+                      value={personalityControls.accentStrength || 0}
+                      onChange={(e) => setPersonalityControls(prev => ({
+                        ...prev,
+                        accentStrength: Number(e.target.value)
+                      }))}
+                      className="w-full h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                      aria-label="Accent strength"
+                    />
+                  </div>
+                )}
 
                               </div>
             )}
 
             {/* Show personality summary during session */}
             {avatarId === 'sarah' && isConnected && (
-              <div className="bg-white border border-slate-200 p-4">
-                <h3 className="text-sm font-medium text-slate-900 mb-2">Active Settings</h3>
-                <div className="space-y-1 text-xs text-slate-600">
+              <div className="rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white p-4 shadow-sm backdrop-blur">
+                <h3 className="text-sm font-semibold text-slate-900 mb-3">Active Settings</h3>
+                <div className="space-y-1.5 text-xs text-slate-600">
                   <div className="flex justify-between">
                     <span>Sadness:</span>
-                    <span className="font-mono font-medium text-slate-900">{personalityControls.sadnessLevel}/10</span>
+                    <span className="font-mono font-medium text-slate-900">{personalityControls.sadnessLevel}/5</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Anger:</span>
-                    <span className="font-mono font-medium text-slate-900">{personalityControls.angerLevel}/10</span>
+                    <span className="font-mono font-medium text-slate-900">{personalityControls.angerLevel}/5</span>
                   </div>
+                  {personalityControls.accentType && personalityControls.accentType !== 'none' && (
+                    <div className="flex justify-between">
+                      <span>Accent:</span>
+                      <span className="font-mono font-medium text-slate-900">
+                        {getAccentDisplayName(personalityControls.accentType)} ({personalityControls.accentStrength || 0}/5)
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
             {/* Connection Status */}
-            <div className="bg-white border border-slate-200 p-6 space-y-5">
+            <div className="rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white p-6 shadow-sm space-y-5">
               <div>
                 <h2 className="text-lg font-medium text-slate-900">Connection</h2>
                 <p className="text-sm text-slate-600 mt-1">

@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { getAvatarById } from "@/lib/avatars";
 import { buildSarahPrompt, PersonalityControls } from "@/lib/prompt-builder";
 
+// This route must always run dynamically (no static optimization) because it
+// pulls secrets and calls external APIs.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function POST(request: Request) {
   try {
     const apiKey = process.env.OPENAI_API_KEY;
@@ -40,7 +45,7 @@ export async function POST(request: Request) {
 
     // Build session configuration based on avatar and controls
     let sessionConfig: any = {
-      model: "gpt-4o-realtime-preview-2024-12-17",
+      model: "gpt-realtime",
       voice: "shimmer" // Female voice for Sarah (warm, natural)
     };
     

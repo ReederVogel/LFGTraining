@@ -776,7 +776,7 @@ export class LiveAvatarClient {
           }
         }
       }, 2000);
-      
+
       this.liveAvatarInstance.repeatAudio(trimmed);
       // Audio was sent successfully - will be confirmed by AVATAR_SPEAK_STARTED event or fallback
       console.log("✅ Audio sent to LiveAvatar - waiting for confirmation");

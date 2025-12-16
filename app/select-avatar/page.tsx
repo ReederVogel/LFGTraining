@@ -6,7 +6,7 @@ import { avatars } from "@/lib/avatars";
 
 export default function SelectAvatarPage() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-8 bg-white">
+    <main className="flex min-h-screen flex-col items-center justify-center p-8 bg-gradient-to-br from-emerald-50 via-white to-white">
       <div className="max-w-4xl w-full space-y-12">
         <div className="text-center space-y-4">
           <h1 className="text-4xl font-light text-slate-900 tracking-tight">
@@ -22,7 +22,7 @@ export default function SelectAvatarPage() {
           {avatars.map((avatar) => (
             <div
               key={avatar.id}
-              className="bg-white border border-slate-200 hover:border-slate-300 transition-colors duration-200 group"
+              className="rounded-2xl overflow-hidden border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white shadow-sm hover:shadow-md hover:border-slate-300/70 transition-all duration-200 group"
             >
               {/* Image */}
               {avatar.imageSrc && (
