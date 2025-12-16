@@ -58,6 +58,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     angerLevel: 2,    // Default: Mild caution
     accentType: 'none',  // Default: No accent
     accentStrength: 0,   // Default: No accent strength
+    language: 'english',  // Default: English
   });
 
   const getAccentDisplayName = (
@@ -1099,6 +1100,33 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                   </div>
                 </div>
 
+                {/* Language Selection */}
+                <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-slate-700">
+                      Language
+                    </label>
+                    <span className="text-xs font-medium text-slate-600">
+                      {personalityControls.language === 'spanish' ? 'Spanish' : 'English'}
+                    </span>
+                  </div>
+                  <select
+                    value={personalityControls.language || 'english'}
+                    onChange={(e) => setPersonalityControls(prev => ({
+                      ...prev,
+                      language: e.target.value as 'english' | 'spanish',
+                      // Reset accent when switching to Spanish
+                      accentType: e.target.value === 'spanish' ? 'none' : prev.accentType,
+                      accentStrength: e.target.value === 'spanish' ? 0 : prev.accentStrength,
+                    }))}
+                    className="w-full px-3 py-2 text-sm border border-slate-300/80 rounded-xl bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                    aria-label="Language selection"
+                  >
+                    <option value="english">English</option>
+                    <option value="spanish">Spanish</option>
+                  </select>
+                </div>
+
                 {/* Sadness Level */}
                 <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
                   <div className="flex items-center justify-between">
@@ -1149,39 +1177,41 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                   />
                 </div>
 
-                {/* Accent Type Selection */}
-                <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium text-slate-700">
-                      Accent
-                    </label>
-                    <span className="text-xs font-medium text-slate-600">
-                      {getAccentDisplayName(personalityControls.accentType)}
-                    </span>
+                {/* Accent Type Selection - Only show for English */}
+                {personalityControls.language !== 'spanish' && (
+                  <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-medium text-slate-700">
+                        Accent
+                      </label>
+                      <span className="text-xs font-medium text-slate-600">
+                        {getAccentDisplayName(personalityControls.accentType)}
+                      </span>
+                    </div>
+                    <select
+                      value={personalityControls.accentType || 'none'}
+                      onChange={(e) => setPersonalityControls(prev => ({
+                        ...prev,
+                        accentType: e.target.value as 'none' | 'louisiana-cajun' | 'texas-southern' | 'indian-english' | 'russian-english',
+                        // If an accent is selected but strength is still 0, default to a heavy accent for training realism.
+                        accentStrength: e.target.value === 'none'
+                          ? 0
+                          : (prev.accentStrength && prev.accentStrength > 0 ? prev.accentStrength : 5)
+                      }))}
+                      className="w-full px-3 py-2 text-sm border border-slate-300/80 rounded-xl bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                      aria-label="Accent type"
+                    >
+                      <option value="none">None (Standard English)</option>
+                      <option value="louisiana-cajun">Louisiana-Cajun</option>
+                      <option value="texas-southern">Texas Southern</option>
+                      <option value="indian-english">Indian</option>
+                      <option value="russian-english">Russian</option>
+                    </select>
                   </div>
-                  <select
-                    value={personalityControls.accentType || 'none'}
-                    onChange={(e) => setPersonalityControls(prev => ({
-                      ...prev,
-                      accentType: e.target.value as 'none' | 'louisiana-cajun' | 'texas-southern' | 'indian-english' | 'russian-english',
-                      // If an accent is selected but strength is still 0, default to a heavy accent for training realism.
-                      accentStrength: e.target.value === 'none'
-                        ? 0
-                        : (prev.accentStrength && prev.accentStrength > 0 ? prev.accentStrength : 5)
-                    }))}
-                    className="w-full px-3 py-2 text-sm border border-slate-300/80 rounded-xl bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
-                    aria-label="Accent type"
-                  >
-                    <option value="none">None (Standard English)</option>
-                    <option value="louisiana-cajun">Louisiana-Cajun</option>
-                    <option value="texas-southern">Texas Southern</option>
-                    <option value="indian-english">Indian</option>
-                    <option value="russian-english">Russian</option>
-                  </select>
-                </div>
+                )}
 
-                {/* Accent Strength - Only show if accent type is selected */}
-                {personalityControls.accentType && personalityControls.accentType !== 'none' && (
+                {/* Accent Strength - Only show if accent type is selected and language is English */}
+                {personalityControls.language !== 'spanish' && personalityControls.accentType && personalityControls.accentType !== 'none' && (
                   <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
                     <div className="flex items-center justify-between">
                       <label className="text-sm font-medium text-slate-700">
@@ -1216,6 +1246,12 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                 <h3 className="text-sm font-semibold text-slate-900 mb-3">Active Settings</h3>
                 <div className="space-y-1.5 text-xs text-slate-600">
                   <div className="flex justify-between">
+                    <span>Language:</span>
+                    <span className="font-mono font-medium text-slate-900">
+                      {personalityControls.language === 'spanish' ? 'Spanish' : 'English'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
                     <span>Sadness:</span>
                     <span className="font-mono font-medium text-slate-900">{personalityControls.sadnessLevel}/5</span>
                   </div>
@@ -1223,7 +1259,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                     <span>Anger:</span>
                     <span className="font-mono font-medium text-slate-900">{personalityControls.angerLevel}/5</span>
                   </div>
-                  {personalityControls.accentType && personalityControls.accentType !== 'none' && (
+                  {personalityControls.language !== 'spanish' && personalityControls.accentType && personalityControls.accentType !== 'none' && (
                     <div className="flex justify-between">
                       <span>Accent:</span>
                       <span className="font-mono font-medium text-slate-900">

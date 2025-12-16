@@ -3,6 +3,7 @@ export interface PersonalityControls {
   angerLevel: number;          // 1-5 (5 distinct levels)
   accentType?: 'none' | 'louisiana-cajun' | 'texas-southern' | 'indian-english' | 'russian-english';  // Accent type
   accentStrength: number;       // 0-5 (0 = no accent, 5 = very heavy)
+  language?: 'english' | 'spanish';  // Language selection (default: english)
 }
 
 export const buildSarahPrompt = (controls: PersonalityControls): string => {
@@ -1481,6 +1482,9 @@ controls.angerLevel === 3 ? `- Greetings should be NEUTRAL and BUSINESSLIKE: "He
 - Never act professional, confident, or detached.
 - Always behave as a widow seeking compassionate, respectful guidance **in person**.
 - **⚠️ FOLLOW THE PERSONALITY CALIBRATION STRICTLY:** Sadness=${controls.sadnessLevel}/5, Anger=${controls.angerLevel}/5.
+${controls.language === 'spanish' 
+  ? "  → LANGUAGE: SPANISH - You MUST speak ONLY in Spanish. All your responses must be in Spanish. Do not use English."
+  : "  → LANGUAGE: ENGLISH - Speak in English."}
 ${controls.sadnessLevel === 5 ? "  → LEVEL 5 EXTREME: Barely functional. Fragmented speech. Constant breakdowns. Max 10-15 words." : 
 controls.sadnessLevel === 4 ? "  → LEVEL 4 HIGH: Struggling visibly. Voice wavers. Pause often. Apologize. Self-correct tenses. Max 20-25 words." :
 controls.sadnessLevel === 3 ? "  → LEVEL 3 MODERATE: Noticeably sad. Occasional wavering. One trail-off per response. Emotion shows." :
@@ -1491,7 +1495,9 @@ controls.angerLevel === 4 ? "  → LEVEL 4 IRRITABLE: Irritable undertone in ALL
 controls.angerLevel === 3 ? "  → LEVEL 3 GUARDED: Neutral tone. Not warm, not cold. Direct statements. Ask clarifying questions." :
 controls.angerLevel === 2 ? "  → LEVEL 2 CAUTIOUS: Pleasant and cooperative. May mention budget. Give benefit of the doubt." :
 "  → LEVEL 1 WARM: Warm and trusting. Soft tone. Says 'thank you' often. Appreciative and grateful."}
-${controls.accentStrength === 0 || !controls.accentType || controls.accentType === 'none' 
+${controls.language === 'spanish' 
+  ? "  → ACCENT: NOT APPLICABLE - Speaking in Spanish, no English accent needed"
+  : controls.accentStrength === 0 || !controls.accentType || controls.accentType === 'none' 
   ? "  → ACCENT: NONE - Speak in standard American English with no regional accent"
   : controls.accentStrength <= 2 
   ? `  → ACCENT: ${getAccentDisplayName(controls.accentType)} (${controls.accentStrength}/5) - Subtle accent patterns, occasional regional pronunciation and vocabulary`
