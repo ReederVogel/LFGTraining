@@ -61,6 +61,9 @@ export class LiveAvatarClient {
   private pendingAudioConfirmation = false;
   private audioConfirmationTimeout: NodeJS.Timeout | null = null;
   private audioFallbackTimeout: NodeJS.Timeout | null = null;
+  // CRITICAL: Track last repeatAudio call time to prevent rapid-fire calls that cause choppy playback
+  private lastRepeatAudioTime = 0;
+  private readonly MIN_REPEAT_AUDIO_INTERVAL_MS = 300; // Minimum 300ms between repeatAudio calls
 
   constructor(config: {
     apiKey: string;
@@ -222,6 +225,7 @@ export class LiveAvatarClient {
     this.lastAudioFailureTime = 0;
     this.lastSuccessfulAudioTime = 0;
     this.pendingAudioConfirmation = false;
+    this.lastRepeatAudioTime = 0; // Reset repeatAudio timing for new session
     if (this.audioConfirmationTimeout) {
       clearTimeout(this.audioConfirmationTimeout);
       this.audioConfirmationTimeout = null;
@@ -714,6 +718,20 @@ export class LiveAvatarClient {
       // Recalculate now in case we waited
       const currentTime = Date.now();
 
+      // CRITICAL: Enforce minimum interval between repeatAudio calls to prevent choppy playback
+      // The repeatAudio() function can restart playback if called too frequently
+      const timeSinceLastRepeatAudio = currentTime - this.lastRepeatAudioTime;
+      if (timeSinceLastRepeatAudio < this.MIN_REPEAT_AUDIO_INTERVAL_MS) {
+        const waitTime = this.MIN_REPEAT_AUDIO_INTERVAL_MS - timeSinceLastRepeatAudio;
+        console.log(`⏸️ Waiting ${waitTime}ms before repeatAudio to prevent choppy playback`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        // Re-check session state after waiting
+        if (this.isSessionDisconnecting) {
+          console.warn("⏸️ Session disconnected during repeatAudio wait");
+          return;
+        }
+      }
+
       // Mark avatar as playing audio
       this.isPlayingAudio = true;
       this.isInterrupted = false; // Reset interrupt flag
@@ -778,11 +796,13 @@ export class LiveAvatarClient {
       }, 2000);
 
       this.liveAvatarInstance.repeatAudio(trimmed);
+      // Track when we last called repeatAudio to prevent rapid-fire calls
+      this.lastRepeatAudioTime = Date.now();
       // Audio was sent successfully - will be confirmed by AVATAR_SPEAK_STARTED event or fallback
       console.log("✅ Audio sent to LiveAvatar - waiting for confirmation");
       
       // Update last successful audio time
-      this.lastSuccessfulAudioTime = currentTime;
+      this.lastSuccessfulAudioTime = Date.now();
       
     } catch (error: any) {
       this.isPlayingAudio = false;

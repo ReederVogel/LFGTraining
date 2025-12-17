@@ -16,13 +16,15 @@ const AVATAR_RESPONSE_DELAY_MS = 0; // No delay - avatar responds immediately
 // Balancing smoothness vs latency:
 // - We want the avatar to start speaking quickly after the user stops.
 // - But we also want to avoid mid-sentence gaps from `repeatAudio()` underflow.
-// Strategy: small initial buffer, then larger throttled chunks.
-const AUDIO_FLUSH_DEBOUNCE_MS = 80;
-const AUDIO_MIN_FIRST_FLUSH_CHARS = 24000; // ~350ms before first send (faster start)
-const AUDIO_MIN_NEXT_FLUSH_CHARS = 48000; // ~750ms subsequent chunks (avoid gaps)
-const AUDIO_MIN_SEND_INTERVAL_MS = 250; // don't call repeatAudio too frequently
-const AUDIO_MAX_WAIT_FIRST_MS = 250; // don't wait too long before starting
-const AUDIO_MAX_WAIT_NEXT_MS = 350;
+// Strategy: larger initial buffer for smooth start, then throttled chunks.
+// CRITICAL: The initial buffer must be large enough to prevent choppy playback start.
+const AUDIO_FLUSH_DEBOUNCE_MS = 100; // Slightly longer debounce for smoother batching
+const AUDIO_MIN_FIRST_FLUSH_CHARS = 48000; // ~700ms before first send (smooth start - prevents choppy beginning)
+const AUDIO_MIN_NEXT_FLUSH_CHARS = 56000; // ~820ms subsequent chunks (avoid mid-sentence gaps)
+const AUDIO_MIN_SEND_INTERVAL_MS = 350; // Minimum 350ms between repeatAudio calls to prevent restart behavior
+const AUDIO_MAX_WAIT_FIRST_MS = 450; // Allow more time to buffer initial audio for smooth start
+const AUDIO_MAX_WAIT_NEXT_MS = 400; // Slightly longer wait for subsequent chunks
+const AUDIO_MIN_ABSOLUTE_CHARS = 16000; // Never send less than ~235ms of audio (prevents tiny choppy chunks)
 
 interface TranscriptItem {
   speaker: "user" | "assistant";
@@ -319,9 +321,29 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     const payloadSize = payload.length;
     const responseIdForFlush = currentAudioResponseIdRef.current;
     
-    // Send even very small payloads; do not drop audio
+    // Don't send empty payloads
     if (payloadSize === 0) {
       isFlushingAudioRef.current = false;
+      return;
+    }
+    
+    // CRITICAL: Never send audio chunks smaller than the minimum threshold
+    // This prevents choppy playback from tiny audio fragments
+    // Exception: allow small final chunks when force=true (end of response)
+    if (!force && payloadSize < AUDIO_MIN_ABSOLUTE_CHARS) {
+      console.log(`⏸️ Audio chunk too small (${payloadSize} < ${AUDIO_MIN_ABSOLUTE_CHARS}) - waiting for more data`);
+      // Put back in buffer and schedule another flush attempt
+      // Don't clear the buffer, let it accumulate more
+      audioBufferRef.current = [payload];
+      audioBufferedCharsRef.current = payloadSize;
+      isFlushingAudioRef.current = false;
+      // Schedule another flush attempt using direct timeout (avoid circular dependency)
+      if (audioFlushTimeoutRef.current) {
+        clearTimeout(audioFlushTimeoutRef.current);
+      }
+      audioFlushTimeoutRef.current = setTimeout(() => {
+        flushAudioBuffer(false, 0);
+      }, AUDIO_FLUSH_DEBOUNCE_MS);
       return;
     }
     
