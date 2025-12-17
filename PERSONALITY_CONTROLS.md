@@ -6,38 +6,64 @@ Dynamic personality controls have been implemented for the Sarah (Widow) avatar,
 
 ## Features
 
-### Two Personality Controls (0-10 scale)
+### Two-Tier Emotional System
 
-1. **Sadness Level**
-   - 0-3: Mostly composed, rare tears, subdued grief
-   - 4-6: Quietly sad, occasional tears, manageable grief (default: 5)
-   - 7-10: Deeply grieving, overwhelming sadness, frequent emotional moments
+**1. Sadness Level (1-5 scale) - ALWAYS PRESENT**
 
-2. **Anger**
-   - 0-3: Patient and understanding, calm responses
-   - 4-6: Slight anger when pushed, may withdraw (default: 3)
-   - 7-10: Easily frustrated, defensive, may snap back
+Sarah is always grieving - this is her base emotional state.
+
+| Level | Description |
+|-------|-------------|
+| 1 | Composed, businesslike, no visible grief |
+| 2 | Mildly sad, well-composed, occasional emotion |
+| 3 | Moderately sad, emotion shows through (default) |
+| 4 | Highly sad, visibly struggling, voice wavers |
+| 5 | Extremely devastated, barely functional |
+
+**2. Coping Style (Secondary Emotion Overlay) - PICK ONE**
+
+How Sarah copes with her grief. Choose ONE or none:
+
+| Style | Description | Training Focus |
+|-------|-------------|----------------|
+| **None** | Pure grief, no secondary emotion | Baseline empathy |
+| **Anger** | Defensive, guarded, suspicious | Stay calm, don't take personally |
+| **Anxiety** | Worried, overthinking, panicking about decisions | Reassure, organize, slow down |
+| **Nervousness** | Hesitant, uncertain, afraid to be a burden | Encourage, normalize, build comfort |
+
+**3. Coping Intensity (1-5 scale) - Only if coping style selected**
+
+| Level | Description |
+|-------|-------------|
+| 1 | Subtle, barely noticeable |
+| 2 | Light, occasional signs |
+| 3 | Moderate, clearly noticeable |
+| 4 | Strong, very obvious |
+| 5 | Extreme, dominates behavior |
 
 ## Implementation Files
 
-### 1. `lib/prompt-builder.ts` (NEW)
+### 1. `lib/prompt-builder.ts`
 - Exports `PersonalityControls` interface
 - `buildSarahPrompt()` function that dynamically builds prompts based on control values
-- Maps each control level to specific behavioral descriptions
-- Integrates personality calibration into the full Sarah prompt
+- `getEmotionalState(level)` - 5 levels of sadness
+- `getAngerLevel(level)` - 5 levels of anger coping
+- `getAnxietyLevel(level)` - 5 levels of anxiety coping
+- `getNervousnessLevel(level)` - 5 levels of nervousness coping
+- Helper functions for greeting behavior, tone, and examples
 
-### 2. `app/api/openai-token/route.ts` (MODIFIED)
+### 2. `app/api/openai-token/route.ts`
 - Accepts `controls` parameter in request body
 - For Sarah avatar with controls: uses inline prompt via `buildSarahPrompt()`
 - For other avatars or no controls: falls back to dashboard prompt ID
-- Supports both prompt modes seamlessly
 
-### 3. `app/session/[id]/page.tsx` (MODIFIED)
-- Added `personalityControls` state with default values
+### 3. `app/session/[id]/page.tsx`
+- `personalityControls` state with default values
 - UI controls appear ONLY for Sarah avatar and ONLY before session starts
-- Two sliders for sadness and anger dimensions
+- Sadness slider (1-5)
+- Coping Style dropdown (None / Anger / Anxiety / Nervousness)
+- Coping Intensity slider (1-5, only visible when coping style selected)
 - During session: shows active settings as read-only summary
-- Passes controls to API when initializing OpenAI connection
 
 ## Usage
 
@@ -48,44 +74,109 @@ Dynamic personality controls have been implemented for the Sarah (Widow) avatar,
 3. Click "Start Session" to begin with selected personality
 4. Once connected, settings are locked and displayed as a summary
 
-### Example Combinations
+### Example Training Scenarios
 
-**Deeply Grieving but Patient Client:**
-- Sadness: 8
-- Anger: 2
-→ Very sad but patient - needs empathy and compassion
+**Deeply Grieving but Calm Client:**
+- Sadness: 5
+- Coping Style: None
+→ Very sad but no secondary emotion - needs pure empathy and patience
 
 **Frustrated Client:**
+- Sadness: 3
+- Coping Style: Anger (4)
+→ Moderately sad + very defensive - needs de-escalation and calm listening
+
+**Panicking Client:**
 - Sadness: 4
-- Anger: 8
-→ Moderately sad but irritated - needs de-escalation and active listening
+- Coping Style: Anxiety (5)
+→ Very sad + overwhelmed by decisions - needs reassurance and organization
+
+**Timid Client:**
+- Sadness: 2
+- Coping Style: Nervousness (4)
+→ Mildly sad + very hesitant - needs encouragement and permission to ask questions
 
 **Ideal Benchmark:**
 - Sadness: 3
-- Anger: 2
-→ Accepting, calm - good for baseline skill assessment
+- Coping Style: None
+→ Baseline emotional state - good for standard training assessment
+
+## Coping Style Behaviors
+
+### Anger Coping
+
+**Level 5 - Defensive and Direct:**
+- Cold greetings: "Hi." with no warmth
+- Very short responses: "What?" "And?" "Fine."
+- Suspicious of everything: "How much is THAT going to cost?"
+- Threatens to leave: "Maybe this was a mistake"
+
+**Level 3 - Guarded:**
+- Neutral, not warm or cold
+- Direct statements, no excessive gratitude
+- Asks clarifying questions
+
+**Level 1 - Warm:**
+- Soft, appreciative tone
+- Says "thank you" often
+- Trusting and grateful
+
+### Anxiety Coping
+
+**Level 5 - Panicking:**
+- Racing questions: "And the flowers and the music and..."
+- Loses track: "Wait... what were we talking about?"
+- Can't focus, jumps between topics
+- Desperately seeks reassurance: "Please tell me what to do"
+
+**Level 3 - Worried:**
+- Follow-up questions: "And what about...?"
+- Concerned about forgetting things
+- Seeks reassurance: "Is that the right choice?"
+
+**Level 1 - Calm:**
+- Makes decisions without second-guessing
+- Clear, focused responses
+
+### Nervousness Coping
+
+**Level 5 - Extremely Timid:**
+- Excessive apologies: "I'm so sorry... I'm sorry to bother..."
+- Trails off: "I was wondering... never mind..."
+- Feels like a burden: "I don't want to waste your time..."
+- Seeks permission for basic questions
+
+**Level 3 - Uncertain:**
+- Apologizes before questions: "I'm sorry... is it okay to ask...?"
+- Hedges requests: "If it's not too much trouble..."
+- Expresses uncertainty: "I've never done this before..."
+
+**Level 1 - Comfortable:**
+- Direct questions without apology
+- No excessive politeness
+- Confident in the interaction
 
 ## Technical Details
 
 ### Prompt Integration
 
-The personality controls are injected into a dedicated "PERSONALITY CALIBRATION" section of the prompt:
+The personality controls inject behavioral instructions into dedicated sections:
 
 ```
-## PERSONALITY CALIBRATION (Current Session Settings)
+## PERSONALITY CALIBRATION
 
-**Emotional State (Sadness Level: 5/10):**
-You are quietly sad and emotional but controlled. You may tear up occasionally when discussing Robert. Your grief is evident but manageable.
+**Emotional State (Sadness Level: 4/5):**
+[Detailed sadness behavior instructions]
 
-**Anger Level: 3/10:**
-You may show slight anger if pushed too hard or upsold...
+**Coping Style (Anxiety, Intensity: 3/5):**
+[Detailed anxiety behavior instructions]
 ```
 
 ### API Flow
 
 1. User adjusts sliders → State updates in `personalityControls`
 2. User clicks "Start Session" → `initializeOpenAI()` called
-3. API receives: `{ avatarId: 'sarah', controls: { sadnessLevel: 5, angerLevel: 3 } }`
+3. API receives: `{ avatarId: 'sarah', controls: { sadnessLevel: 4, copingStyle: 'anxiety', copingIntensity: 3 } }`
 4. API route checks: if `avatarId === 'sarah' && controls` → use dynamic prompt
 5. `buildSarahPrompt(controls)` generates full prompt text
 6. OpenAI Realtime API session created with inline prompt
@@ -95,7 +186,7 @@ You may show slight anger if pushed too hard or upsold...
 - Controls are available **only for Sarah avatar** (widow)
 - Settings must be chosen **before** starting the session
 - Cannot be changed mid-session (would require reconnection)
-- Michael avatar still uses dashboard prompt ID
+- Only ONE coping style can be active at a time (prevents conflicting behaviors)
 
 ## Future Enhancements
 
@@ -110,16 +201,14 @@ You may show slight anger if pushed too hard or upsold...
 1. Start development server: `npm run dev`
 2. Navigate to `http://localhost:3000`
 3. Click "Start Training" → Select "Sarah"
-4. Adjust personality sliders
+4. Set sadness level, coping style, and intensity
 5. Click "Start Session"
 6. Speak to Sarah and observe behavior matches selected personality
 7. Verify settings are locked during session and shown as summary
 
 ## Notes
 
-- Default values provide a balanced, realistic training scenario
-- Extreme values (0 or 10) create edge cases useful for advanced training
+- Default values provide a balanced, realistic training scenario (Sadness 3, No coping style)
+- Extreme values create edge cases useful for advanced training
 - The prompt maintains all original Sarah persona details while layering personality calibration on top
-- No user ID is required for testing; can be added later when authentication is implemented
-
-
+- Anxiety and Nervousness are NEW - teach different trainee skills than Anger

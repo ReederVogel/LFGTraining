@@ -13,12 +13,16 @@ const AVATAR_RESPONSE_DELAY_MS = 0; // No delay - avatar responds immediately
 // which can behave like a restart if called too frequently. To prevent the common
 // "hel hello..." stutter, we pre-buffer the start of each assistant audio stream
 // and throttle subsequent sends.
-const AUDIO_FLUSH_DEBOUNCE_MS = 150;
-const AUDIO_MIN_FIRST_FLUSH_CHARS = 40000; // ~600ms buffer before first send (smoother start)
-const AUDIO_MIN_NEXT_FLUSH_CHARS = 32000; // bigger subsequent chunks
-const AUDIO_MIN_SEND_INTERVAL_MS = 300; // more spacing between sends
-const AUDIO_MAX_WAIT_FIRST_MS = 700; // allow more time to collect initial audio
-const AUDIO_MAX_WAIT_NEXT_MS = 600;
+// Balancing smoothness vs latency:
+// - We want the avatar to start speaking quickly after the user stops.
+// - But we also want to avoid mid-sentence gaps from `repeatAudio()` underflow.
+// Strategy: small initial buffer, then larger throttled chunks.
+const AUDIO_FLUSH_DEBOUNCE_MS = 80;
+const AUDIO_MIN_FIRST_FLUSH_CHARS = 24000; // ~350ms before first send (faster start)
+const AUDIO_MIN_NEXT_FLUSH_CHARS = 48000; // ~750ms subsequent chunks (avoid gaps)
+const AUDIO_MIN_SEND_INTERVAL_MS = 250; // don't call repeatAudio too frequently
+const AUDIO_MAX_WAIT_FIRST_MS = 250; // don't wait too long before starting
+const AUDIO_MAX_WAIT_NEXT_MS = 350;
 
 interface TranscriptItem {
   speaker: "user" | "assistant";
@@ -52,10 +56,11 @@ export default function SessionPage({ params }: { params: { id: string } }) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [hasUserStartedSpeaking, setHasUserStartedSpeaking] = useState(false);
   
-  // Personality controls for Sarah avatar (5 levels: 1-5)
+  // Personality controls for Sarah avatar
   const [personalityControls, setPersonalityControls] = useState<PersonalityControls>({
     sadnessLevel: 3,  // Default: Moderate sadness
-    angerLevel: 2,    // Default: Mild caution
+    copingStyle: 'none',  // Default: No secondary coping style (just grief)
+    copingIntensity: 3,   // Default: Moderate intensity (if a coping style is selected)
     accentType: 'none',  // Default: No accent
     accentStrength: 0,   // Default: No accent strength
     language: 'english',  // Default: English
@@ -65,10 +70,10 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     accentType: PersonalityControls["accentType"] | undefined
   ): string => {
     if (!accentType || accentType === "none") return "None (Standard English)";
-    if (accentType === "louisiana-cajun") return "Louisiana-Cajun";
+    if (accentType === "midwestern") return "Midwestern";
     if (accentType === "texas-southern") return "Texas Southern";
+    if (accentType === "cajun") return "Cajun";
     if (accentType === "indian-english") return "Indian";
-    if (accentType === "russian-english") return "Russian";
     return String(accentType);
   };
   
@@ -328,7 +333,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
 
     const flushStart = Date.now();
     try {
-      console.log(`📤 Flushing audio buffer (attempt ${retryCount + 1}) - size: ${payloadSize} chars`);
+      console.log(`📤 Flushing audio buffer (attempt ${retryCount + 1}) - size: ${payloadSize} chars, force: ${force}`);
       if (force || payloadSize < 20000) {
         // #region agent log
         fetch('http://127.0.0.1:7242/ingest/bd86f80f-0f18-4670-92ee-7cb26cc4fc5e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B',location:'app/session/[id]/page.tsx:flushAudioBuffer:beforeSend',message:'flush_audio_send',data:{force,retryCount,responseId:responseIdForFlush,payloadSize,bufferedCharsBefore:bufferedChars,bufferParts:audioBufferRef.current.length},timestamp:Date.now()})}).catch(()=>{});
@@ -336,7 +341,8 @@ export default function SessionPage({ params }: { params: { id: string } }) {
       }
       await avatarClientRef.current.speakPcmAudio(payload);
       lastAudioSentTimeRef.current = Date.now();
-      console.log("✅ Audio buffer flushed successfully");
+      const flushDuration = Date.now() - flushStart;
+      console.log(`✅ Audio buffer flushed successfully in ${flushDuration}ms - sent ${payloadSize} chars to LiveAvatar`);
     } catch (error: any) {
       const errorMessage = error?.message || String(error);
       console.error(`❌ Error sending audio to avatar (attempt ${retryCount + 1}):`, errorMessage);
@@ -470,6 +476,11 @@ export default function SessionPage({ params }: { params: { id: string } }) {
       const source = audioContext.createMediaStreamSource(stream);
       const processor = audioContext.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
+      // ScriptProcessorNode must be connected to keep `onaudioprocess` firing in many browsers.
+      // Connect through a muted gain node to avoid playing the microphone back to the user
+      // (which can cause echo/feedback and trigger false VAD interrupts that cut avatar speech).
+      const mutedGain = audioContext.createGain();
+      mutedGain.gain.value = 0;
       
       processor.onaudioprocess = (e) => {
         if (ws.readyState === WebSocket.OPEN) {
@@ -496,7 +507,8 @@ export default function SessionPage({ params }: { params: { id: string } }) {
       };
       
       source.connect(processor);
-      processor.connect(audioContext.destination);
+      processor.connect(mutedGain);
+      mutedGain.connect(audioContext.destination);
       
       setStatus("Microphone ready ✓");
       return true;
@@ -601,6 +613,11 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                   stats.totalChars += deltaChars;
                   stats.lastAt = Date.now();
                   audioStatsRef.current.set(audioResponseId, stats);
+                  
+                  // Log first audio delta for debugging
+                  if (stats.deltaCount === 1) {
+                    console.log(`🎵 First audio delta received - response_id: ${audioResponseId}, size: ${deltaChars} chars`);
+                  }
                 }
                 audioBufferRef.current.push(data.delta);
                 audioBufferedCharsRef.current += typeof data.delta === "string" ? data.delta.length : 0;
@@ -609,7 +626,9 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                 }
                 lastAudioSentTimeRef.current = Date.now();
 
-                // Throttle sends to reduce `repeatAudio()` restart artifacts (the "hel hello" issue).
+                // Smooth + low latency: start speaking once we have a small initial buffer,
+                // then continue sending larger throttled chunks so we don't underflow.
+                // (We still always flush whatever is left on `response.done`.)
                 const now = Date.now();
                 const minChars = audioHasStartedRef.current
                   ? AUDIO_MIN_NEXT_FLUSH_CHARS
@@ -775,6 +794,27 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                 const a = doneResponseId ? audioStatsRef.current.get(doneResponseId) : undefined;
                 const t = doneResponseId ? transcriptStatsRef.current.get(doneResponseId) : undefined;
                 const tail = doneResponseId ? assistantTextTailRef.current.get(doneResponseId) : undefined;
+                
+                // DIAGNOSTIC: Log audio stats to help debug "no audio" issues
+                console.log(`📊 Response done - Audio stats:`, {
+                  responseId: doneResponseId,
+                  audioDeltaCount: a?.deltaCount ?? 0,
+                  audioTotalChars: a?.totalChars ?? 0,
+                  transcriptDeltaCount: t?.deltaCount ?? 0,
+                  transcriptTotalChars: t?.totalChars ?? 0,
+                  bufferedChars: audioBufferedCharsRef.current,
+                  transcriptText: tail,
+                });
+                
+                // WARNING: If we have transcript but no audio, something is wrong
+                if ((t?.deltaCount ?? 0) > 0 && (a?.deltaCount ?? 0) === 0) {
+                  console.warn(`⚠️ OpenAI generated transcript but NO AUDIO - This usually means:`);
+                  console.warn(`   1. The response was too short (OpenAI may not generate audio for very short responses)`);
+                  console.warn(`   2. There was an issue with the OpenAI audio stream`);
+                  console.warn(`   Response text: "${tail}"`);
+                  setStatus("⚠️ No audio received - response may have been too short");
+                }
+                
                 // #region agent log
                 fetch('http://127.0.0.1:7242/ingest/bd86f80f-0f18-4670-92ee-7cb26cc4fc5e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix-v2',hypothesisId:'D',location:'app/session/[id]/page.tsx:response.done:v2',message:'response_done_snapshot_v2',data:{responseId:doneResponseId,eventType:data.type,audioDeltaCount:a?.deltaCount ?? null,audioTotalChars:a?.totalChars ?? null,msSinceLastAudioDelta:a?.lastAt ? Date.now()-a.lastAt : null,transcriptDeltaCount:t?.deltaCount ?? null,transcriptTotalChars:t?.totalChars ?? null,msSinceLastTranscriptDelta:t?.lastAt ? Date.now()-t.lastAt : null,bufferParts:audioBufferRef.current.length,bufferedChars:audioBufferedCharsRef.current,audioHasStarted:audioHasStartedRef.current,isAvatarPlaying:isAvatarAudioPlayingRef.current,assistantTail:tail ?? null},timestamp:Date.now()})}).catch(()=>{});
                 // #endregion
@@ -1089,182 +1129,244 @@ export default function SessionPage({ params }: { params: { id: string } }) {
           <div className="space-y-6">
             {/* Personality Controls - Only for Sarah and before session starts */}
             {avatarId === 'sarah' && !isConnected && (
-              <div className="rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white p-6 shadow-sm backdrop-blur space-y-5">
+              <div className="rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white p-6 shadow-sm backdrop-blur space-y-6">
                 <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="text-lg font-semibold text-slate-900">Avatar Controls</h2>
-                  </div>
+                  <h2 className="text-lg font-semibold text-slate-900">Avatar Settings</h2>
                   <div className="text-[11px] text-slate-500 leading-tight text-right">
                     Set before starting
                     <div className="text-slate-400">Locked during session</div>
                   </div>
                 </div>
 
-                {/* Language Selection */}
-                <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium text-slate-700">
-                      Language
-                    </label>
-                    <span className="text-xs font-medium text-slate-600">
-                      {personalityControls.language === 'spanish' ? 'Spanish' : 'English'}
-                    </span>
-                  </div>
-                  <select
-                    value={personalityControls.language || 'english'}
-                    onChange={(e) => setPersonalityControls(prev => ({
-                      ...prev,
-                      language: e.target.value as 'english' | 'spanish',
-                      // Reset accent when switching to Spanish
-                      accentType: e.target.value === 'spanish' ? 'none' : prev.accentType,
-                      accentStrength: e.target.value === 'spanish' ? 0 : prev.accentStrength,
-                    }))}
-                    className="w-full px-3 py-2 text-sm border border-slate-300/80 rounded-xl bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
-                    aria-label="Language selection"
-                  >
-                    <option value="english">English</option>
-                    <option value="spanish">Spanish</option>
-                  </select>
-                </div>
-
-                {/* Sadness Level */}
-                <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium text-slate-700">
-                      Sadness
-                    </label>
-                    <span className="text-xs font-mono text-slate-900 bg-white border border-slate-200/70 px-2 py-0.5 rounded-full">
-                      {personalityControls.sadnessLevel}/5
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="1"
-                    max="5"
-                    step="1"
-                    value={personalityControls.sadnessLevel}
-                    onChange={(e) => setPersonalityControls(prev => ({
-                      ...prev,
-                      sadnessLevel: Number(e.target.value)
-                    }))}
-                    className="w-full h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
-                    aria-label="Sadness level"
-                  />
-                </div>
-
-                {/* Anger Level */}
-                <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium text-slate-700">
-                      Anger
-                    </label>
-                    <span className="text-xs font-mono text-slate-900 bg-white border border-slate-200/70 px-2 py-0.5 rounded-full">
-                      {personalityControls.angerLevel}/5
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="1"
-                    max="5"
-                    step="1"
-                    value={personalityControls.angerLevel}
-                    onChange={(e) => setPersonalityControls(prev => ({
-                      ...prev,
-                      angerLevel: Number(e.target.value)
-                    }))}
-                    className="w-full h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
-                    aria-label="Anger level"
-                  />
-                </div>
-
-                {/* Accent Type Selection - Only show for English */}
-                {personalityControls.language !== 'spanish' && (
-                  <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-slate-700">
-                        Accent
-                      </label>
-                      <span className="text-xs font-medium text-slate-600">
-                        {getAccentDisplayName(personalityControls.accentType)}
-                      </span>
-                    </div>
+                {/* SECTION 1: LANGUAGE */}
+                <div className="space-y-3">
+                  <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">1. Language</h3>
+                  <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4">
                     <select
-                      value={personalityControls.accentType || 'none'}
+                      value={personalityControls.language || 'english'}
                       onChange={(e) => setPersonalityControls(prev => ({
                         ...prev,
-                        accentType: e.target.value as 'none' | 'louisiana-cajun' | 'texas-southern' | 'indian-english' | 'russian-english',
-                        // If an accent is selected but strength is still 0, default to a heavy accent for training realism.
-                        accentStrength: e.target.value === 'none'
-                          ? 0
-                          : (prev.accentStrength && prev.accentStrength > 0 ? prev.accentStrength : 5)
+                        language: e.target.value as 'english' | 'spanish',
+                        // Reset accent when switching to Spanish
+                        accentType: e.target.value === 'spanish' ? 'none' : prev.accentType,
+                        accentStrength: e.target.value === 'spanish' ? 0 : prev.accentStrength,
                       }))}
-                      className="w-full px-3 py-2 text-sm border border-slate-300/80 rounded-xl bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
-                      aria-label="Accent type"
+                      className="w-full px-3 py-2 text-sm border border-slate-300/80 rounded-lg bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                      aria-label="Language selection"
                     >
-                      <option value="none">None (Standard English)</option>
-                      <option value="louisiana-cajun">Louisiana-Cajun</option>
-                      <option value="texas-southern">Texas Southern</option>
-                      <option value="indian-english">Indian</option>
-                      <option value="russian-english">Russian</option>
+                      <option value="english">English</option>
+                      <option value="spanish">Spanish</option>
                     </select>
                   </div>
-                )}
+                </div>
 
-                {/* Accent Strength - Only show if accent type is selected and language is English */}
-                {personalityControls.language !== 'spanish' && personalityControls.accentType && personalityControls.accentType !== 'none' && (
-                  <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-slate-700">
-                        Accent Strength
-                      </label>
-                      <span className="text-xs font-mono text-slate-900 bg-white border border-slate-200/70 px-2 py-0.5 rounded-full">
-                        {personalityControls.accentStrength || 0}/5
-                      </span>
+                {/* SECTION 2: EMOTIONS */}
+                <div className="space-y-3">
+                  <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">2. Emotions</h3>
+                  
+                  <div className="space-y-3">
+                    {/* Grief Level */}
+                    <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium text-slate-700">
+                          Grief Level
+                        </label>
+                        <span className="text-xs font-mono text-slate-900 bg-white border border-slate-200/70 px-2 py-0.5 rounded-full">
+                          {personalityControls.sadnessLevel}/5
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="1"
+                        max="5"
+                        step="1"
+                        value={personalityControls.sadnessLevel}
+                        onChange={(e) => setPersonalityControls(prev => ({
+                          ...prev,
+                          sadnessLevel: Number(e.target.value)
+                        }))}
+                        className="w-full h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                        aria-label="Sadness level"
+                      />
+                      <p className="text-xs text-slate-500">
+                        {personalityControls.sadnessLevel === 1 ? 'Composed' :
+                         personalityControls.sadnessLevel === 2 ? 'Mildly sad' :
+                         personalityControls.sadnessLevel === 3 ? 'Moderately sad' :
+                         personalityControls.sadnessLevel === 4 ? 'Very sad' :
+                         'Devastated'}
+                      </p>
                     </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="5"
-                      step="1"
-                      value={personalityControls.accentStrength || 0}
-                      onChange={(e) => setPersonalityControls(prev => ({
-                        ...prev,
-                        accentStrength: Number(e.target.value)
-                      }))}
-                      className="w-full h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
-                      aria-label="Accent strength"
-                    />
+
+                    {/* Secondary Emotion */}
+                    <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium text-slate-700">
+                          Secondary Emotion
+                        </label>
+                        <span className="text-xs text-slate-500">Optional</span>
+                      </div>
+                      <select
+                        value={personalityControls.copingStyle || 'none'}
+                        onChange={(e) => setPersonalityControls(prev => ({
+                          ...prev,
+                          copingStyle: e.target.value as 'none' | 'anger' | 'anxiety' | 'nervousness'
+                        }))}
+                        className="w-full px-3 py-2 text-sm border border-slate-300/80 rounded-lg bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                        aria-label="Coping style"
+                      >
+                        <option value="none">None</option>
+                        <option value="anger">Anger (Defensive, guarded)</option>
+                        <option value="anxiety">Anxiety (Worried, overthinking)</option>
+                        <option value="nervousness">Nervousness (Hesitant, uncertain)</option>
+                      </select>
+                    </div>
+
+                    {/* Intensity - Only show if secondary emotion is selected */}
+                    {personalityControls.copingStyle && personalityControls.copingStyle !== 'none' && (
+                      <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-medium text-slate-700">
+                            Intensity
+                          </label>
+                          <span className="text-xs font-mono text-slate-900 bg-white border border-slate-200/70 px-2 py-0.5 rounded-full">
+                            {personalityControls.copingIntensity}/5
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="1"
+                          max="5"
+                          step="1"
+                          value={personalityControls.copingIntensity}
+                          onChange={(e) => setPersonalityControls(prev => ({
+                            ...prev,
+                            copingIntensity: Number(e.target.value)
+                          }))}
+                          className="w-full h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                          aria-label="Coping intensity"
+                        />
+                        <p className="text-xs text-slate-500">
+                          {personalityControls.copingIntensity === 1 ? 'Very subtle' :
+                           personalityControls.copingIntensity === 2 ? 'Subtle' :
+                           personalityControls.copingIntensity === 3 ? 'Moderate' :
+                           personalityControls.copingIntensity === 4 ? 'Strong' :
+                           'Very strong'}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* SECTION 3: ACCENT */}
+                {personalityControls.language !== 'spanish' && (
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">3. Accent</h3>
+                    
+                    {/* Accent Type */}
+                    <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
+                      <label className="text-sm font-medium text-slate-700 block mb-2">
+                        Accent Type
+                      </label>
+                      <select
+                        value={personalityControls.accentType || 'none'}
+                        onChange={(e) => setPersonalityControls(prev => ({
+                          ...prev,
+                          accentType: e.target.value as 'none' | 'midwestern' | 'texas-southern' | 'cajun' | 'indian-english',
+                          // If an accent is selected but strength is still 0, default to a heavy accent for training realism.
+                          accentStrength: e.target.value === 'none'
+                            ? 0
+                            : (prev.accentStrength && prev.accentStrength > 0 ? prev.accentStrength : 5)
+                        }))}
+                        className="w-full px-3 py-2 text-sm border border-slate-300/80 rounded-lg bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                        aria-label="Accent type"
+                      >
+                        <option value="none">None (Standard English)</option>
+                        <option value="midwestern">Midwestern</option>
+                        <option value="texas-southern">Texas Southern</option>
+                        <option value="cajun">Cajun</option>
+                        <option value="indian-english">Indian</option>
+                      </select>
+                    </div>
+
+                    {/* Accent Strength - Only show if accent type is selected */}
+                    {personalityControls.accentType && personalityControls.accentType !== 'none' && (
+                      <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-medium text-slate-700">
+                            Accent Strength
+                          </label>
+                          <span className="text-xs font-mono text-slate-900 bg-white border border-slate-200/70 px-2 py-0.5 rounded-full">
+                            {personalityControls.accentStrength || 0}/5
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="5"
+                          step="1"
+                          value={personalityControls.accentStrength || 0}
+                          onChange={(e) => setPersonalityControls(prev => ({
+                            ...prev,
+                            accentStrength: Number(e.target.value)
+                          }))}
+                          className="w-full h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                          aria-label="Accent strength"
+                        />
+                        <p className="text-xs text-slate-500">
+                          {personalityControls.accentStrength === 0 ? 'None' :
+                           personalityControls.accentStrength === 1 ? 'Very subtle' :
+                           personalityControls.accentStrength === 2 ? 'Light' :
+                           personalityControls.accentStrength === 3 ? 'Moderate' :
+                           personalityControls.accentStrength === 4 ? 'Strong' :
+                           'Very strong'}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                              </div>
+              </div>
             )}
 
             {/* Show personality summary during session */}
             {avatarId === 'sarah' && isConnected && (
               <div className="rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white p-4 shadow-sm backdrop-blur">
-                <h3 className="text-sm font-semibold text-slate-900 mb-3">Active Settings</h3>
-                <div className="space-y-1.5 text-xs text-slate-600">
-                  <div className="flex justify-between">
-                    <span>Language:</span>
-                    <span className="font-mono font-medium text-slate-900">
+                <h3 className="text-sm font-semibold text-slate-900 mb-3">🔒 Active Settings</h3>
+                <div className="space-y-3 text-xs">
+                  {/* Language */}
+                  <div>
+                    <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Language</div>
+                    <div className="text-slate-900 font-medium">
                       {personalityControls.language === 'spanish' ? 'Spanish' : 'English'}
-                    </span>
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Sadness:</span>
-                    <span className="font-mono font-medium text-slate-900">{personalityControls.sadnessLevel}/5</span>
+                  
+                  {/* Emotions */}
+                  <div>
+                    <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Emotions</div>
+                    <div className="space-y-1 text-slate-700">
+                      <div className="flex justify-between">
+                        <span>Grief:</span>
+                        <span className="font-mono font-medium text-slate-900">{personalityControls.sadnessLevel}/5</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Secondary:</span>
+                        <span className="font-mono font-medium text-slate-900">
+                          {personalityControls.copingStyle === 'none' || !personalityControls.copingStyle ? 
+                            'None' :
+                           `${personalityControls.copingStyle.charAt(0).toUpperCase() + personalityControls.copingStyle.slice(1)} (${personalityControls.copingIntensity}/5)`}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Anger:</span>
-                    <span className="font-mono font-medium text-slate-900">{personalityControls.angerLevel}/5</span>
-                  </div>
+
+                  {/* Accent */}
                   {personalityControls.language !== 'spanish' && personalityControls.accentType && personalityControls.accentType !== 'none' && (
-                    <div className="flex justify-between">
-                      <span>Accent:</span>
-                      <span className="font-mono font-medium text-slate-900">
+                    <div>
+                      <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Accent</div>
+                      <div className="text-slate-900 font-medium">
                         {getAccentDisplayName(personalityControls.accentType)} ({personalityControls.accentStrength || 0}/5)
-                      </span>
+                      </div>
                     </div>
                   )}
                 </div>
