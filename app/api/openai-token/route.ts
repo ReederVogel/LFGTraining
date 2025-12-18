@@ -43,10 +43,43 @@ export async function POST(request: Request) {
       );
     }
 
+    // Validate personality controls if provided (for Sarah avatar)
+    if (avatarId === 'sarah' && controls) {
+      // Validate sadness level (1-5)
+      if (controls.sadnessLevel < 1 || controls.sadnessLevel > 5) {
+        return NextResponse.json(
+          { error: "sadnessLevel must be between 1 and 5" },
+          { status: 400 }
+        );
+      }
+      
+      // Validate coping intensity if coping style is set
+      if (controls.copingStyle && controls.copingStyle !== 'none') {
+        if (controls.copingIntensity < 1 || controls.copingIntensity > 5) {
+          return NextResponse.json(
+            { error: "copingIntensity must be between 1 and 5 when copingStyle is set" },
+            { status: 400 }
+          );
+        }
+      }
+      
+      // Validate accent strength if accent type is set
+      if (controls.accentType && controls.accentType !== 'none') {
+        if (controls.accentStrength < 0 || controls.accentStrength > 5) {
+          return NextResponse.json(
+            { error: "accentStrength must be between 0 and 5 when accentType is set" },
+            { status: 400 }
+          );
+        }
+      }
+    }
+
     // Build session configuration based on avatar and controls
+    // Using "shimmer" voice - optimized for natural, warm, emotional speech
+    // This voice works well with accents and emotional variations
     let sessionConfig: any = {
       model: "gpt-realtime",
-      voice: "shimmer" // Female voice for Sarah (warm, natural)
+      voice: "shimmer" // Female voice optimized for natural, warm, emotional speech with accent support
     };
     
     if (avatarId === 'sarah' && controls) {

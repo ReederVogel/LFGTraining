@@ -16,15 +16,17 @@ const AVATAR_RESPONSE_DELAY_MS = 0; // No delay - avatar responds immediately
 // Balancing smoothness vs latency:
 // - We want the avatar to start speaking quickly after the user stops.
 // - But we also want to avoid mid-sentence gaps from `repeatAudio()` underflow.
-// Strategy: larger initial buffer for smooth start, then throttled chunks.
-// CRITICAL: The initial buffer must be large enough to prevent choppy playback start.
-const AUDIO_FLUSH_DEBOUNCE_MS = 100; // Slightly longer debounce for smoother batching
-const AUDIO_MIN_FIRST_FLUSH_CHARS = 48000; // ~700ms before first send (smooth start - prevents choppy beginning)
-const AUDIO_MIN_NEXT_FLUSH_CHARS = 56000; // ~820ms subsequent chunks (avoid mid-sentence gaps)
-const AUDIO_MIN_SEND_INTERVAL_MS = 350; // Minimum 350ms between repeatAudio calls to prevent restart behavior
-const AUDIO_MAX_WAIT_FIRST_MS = 450; // Allow more time to buffer initial audio for smooth start
-const AUDIO_MAX_WAIT_NEXT_MS = 400; // Slightly longer wait for subsequent chunks
-const AUDIO_MIN_ABSOLUTE_CHARS = 16000; // Never send less than ~235ms of audio (prevents tiny choppy chunks)
+// Strategy: Buffer enough for smooth continuous playback without gaps.
+// CRITICAL FIX: Previous values caused mid-response gaps (avatar cut off then continued).
+// The issue: after first chunk, subsequent chunks required MORE data (56000) but LESS wait time (400ms).
+// This caused gaps between chunks. Solution: consistent buffering throughout.
+const AUDIO_FLUSH_DEBOUNCE_MS = 80; // Faster debounce for quicker chunk assembly
+const AUDIO_MIN_FIRST_FLUSH_CHARS = 40000; // ~580ms before first send (balance: quick start + smooth playback)
+const AUDIO_MIN_NEXT_FLUSH_CHARS = 40000; // SAME as first chunk - consistent sizing prevents gaps
+const AUDIO_MIN_SEND_INTERVAL_MS = 250; // Reduced interval - allows faster continuous streaming
+const AUDIO_MAX_WAIT_FIRST_MS = 600; // Increased: wait longer for first chunk to accumulate properly
+const AUDIO_MAX_WAIT_NEXT_MS = 500; // Increased: wait longer for subsequent chunks too (prevents gaps)
+const AUDIO_MIN_ABSOLUTE_CHARS = 12000; // Reduced: allow smaller final chunks for smoother endings
 
 interface TranscriptItem {
   speaker: "user" | "assistant";
@@ -32,6 +34,13 @@ interface TranscriptItem {
   timestamp: number;
   id: string;
 }
+
+// End-of-turn "silence coach":
+// If the trainee stays silent for 8 seconds after the avatar finishes speaking,
+// show a gentle prompt with a notification sound.
+// If silence continues to 25 seconds, automatically end the session.
+const SILENCE_COACH_MS = 8000;
+const SILENCE_AUTO_END_MS = 25000;
 
 const STAGE_DIRECTION_REGEX = /(\((?:[^)]{0,40})(deep\s*breath|breath(?:es|ing)?|sigh(?:s|ing)?|sniff(?:le|les|ling)?|sob(?:s|bing)?|cry(?:ing|ies)?|chok(?:e|es)\s*up|clear(?:s)?\s*(?:my\s*)?throat|gasp(?:s|ing)?|inhale(?:s|d|ing)?|exhale(?:s|d|ing)?|pause(?:s|d|ing)?)(?:[^)]{0,40})\))|(\[(?:[^\]]{0,40})(deep\s*breath|breath(?:es|ing)?|sigh(?:s|ing)?|sniff(?:le|les|ling)?|sob(?:s|bing)?|cry(?:ing|ies)?|chok(?:e|es)\s*up|clear(?:s)?\s*(?:my\s*)?throat|gasp(?:s|ing)?|inhale(?:s|d|ing)?|exhale(?:s|d|ing)?|pause(?:s|d|ing)?)(?:[^\]]{0,40})\])|(\*(?:[^*]{0,40})(deep\s*breath|breath(?:es|ing)?|sigh(?:s|ing)?|sniff(?:le|les|ling)?|sob(?:s|bing)?|cry(?:ing|ies)?|chok(?:e|es)\s*up|clear(?:s)?\s*(?:my\s*)?throat|gasp(?:s|ing)?|inhale(?:s|d|ing)?|exhale(?:s|d|ing)?|pause(?:s|d|ing)?)(?:[^*]{0,40})\*)/gi;
 
@@ -57,6 +66,9 @@ export default function SessionPage({ params }: { params: { id: string } }) {
   const [connectedAt, setConnectedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [hasUserStartedSpeaking, setHasUserStartedSpeaking] = useState(false);
+  const [silenceCoachMessage, setSilenceCoachMessage] = useState<string | null>(null);
+  const [sessionEndReason, setSessionEndReason] = useState<"manual" | "inactivity" | null>(null);
+  const [countdownSeconds, setCountdownSeconds] = useState<number | null>(null);
   
   // Personality controls for Sarah avatar
   const [personalityControls, setPersonalityControls] = useState<PersonalityControls>({
@@ -107,6 +119,14 @@ export default function SessionPage({ params }: { params: { id: string } }) {
   const pendingUserTranscriptRef = useRef<{ itemId: string; startTime: number } | null>(null);
   // Map item_id to speech start time to handle multiple concurrent speech events
   const userSpeechStartTimesRef = useRef<Map<string, number>>(new Map());
+  const isConnectedRef = useRef<boolean>(false);
+  const statusRef = useRef<string>(status);
+  const silenceCoachTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const silenceAutoEndTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const silenceCoachEligibleRef = useRef<boolean>(false);
+  const coachSoundContextRef = useRef<AudioContext | null>(null);
+  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const hasPlayedReadySoundRef = useRef<boolean>(false);
   const audioStatsRef = useRef<Map<string, { deltaCount: number; totalChars: number; lastAt: number }>>(
     new Map()
   );
@@ -122,6 +142,205 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     const seconds = (totalSeconds % 60).toString().padStart(2, "0");
     return `${minutes}:${seconds}`;
   }, []);
+
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  const cancelSilenceCoach = useCallback(() => {
+    if (silenceCoachTimeoutRef.current) {
+      clearTimeout(silenceCoachTimeoutRef.current);
+      silenceCoachTimeoutRef.current = null;
+    }
+    if (silenceAutoEndTimeoutRef.current) {
+      clearTimeout(silenceAutoEndTimeoutRef.current);
+      silenceAutoEndTimeoutRef.current = null;
+    }
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+    }
+    setSilenceCoachMessage(null);
+    setCountdownSeconds(null);
+  }, []);
+
+  const playCoachSound = useCallback(() => {
+    try {
+      // Create or resume AudioContext (must be triggered after user gesture)
+      if (!coachSoundContextRef.current) {
+        const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+        if (!Ctx) return;
+        coachSoundContextRef.current = new Ctx();
+      }
+
+      const ctx = coachSoundContextRef.current;
+      if (ctx.state === "suspended") {
+        void ctx.resume();
+      }
+
+      // Two-tone gentle "ding" notification
+      const now = ctx.currentTime;
+
+      // First tone (higher)
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = "sine";
+      osc1.frequency.value = 880; // A5
+      gain1.gain.setValueAtTime(0.15, now);
+      gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.15);
+
+      // Second tone (lower, slightly delayed)
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = "sine";
+      osc2.frequency.value = 660; // E5
+      gain2.gain.setValueAtTime(0.12, now + 0.1);
+      gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(now + 0.1);
+      osc2.stop(now + 0.3);
+    } catch {
+      // Sound is optional - ignore errors
+    }
+  }, []);
+
+  const playReadySound = useCallback(() => {
+    try {
+      // Create or resume AudioContext (must be triggered after user gesture)
+      if (!coachSoundContextRef.current) {
+        const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+        if (!Ctx) return;
+        coachSoundContextRef.current = new Ctx();
+      }
+
+      const ctx = coachSoundContextRef.current;
+      if (ctx.state === "suspended") {
+        void ctx.resume();
+      }
+
+      // Single gentle tone for "ready to begin"
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 523; // C5 - pleasant, welcoming tone
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.2);
+    } catch {
+      // Sound is optional - ignore errors
+    }
+  }, []);
+
+  const playTimerTick = useCallback(() => {
+    try {
+      // Create or resume AudioContext (must be triggered after user gesture)
+      if (!coachSoundContextRef.current) {
+        const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+        if (!Ctx) return;
+        coachSoundContextRef.current = new Ctx();
+      }
+
+      const ctx = coachSoundContextRef.current;
+      if (ctx.state === "suspended") {
+        void ctx.resume();
+      }
+
+      // Short, quiet tick sound for countdown timer
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 800; // Higher pitch for tick
+      gain.gain.setValueAtTime(0.08, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.05);
+    } catch {
+      // Sound is optional - ignore errors
+    }
+  }, []);
+
+  const scheduleSilenceCoach = useCallback(() => {
+    // Only show during an active session.
+    if (!isConnectedRef.current) return;
+
+    // Only show when we're truly ready for the trainee to speak.
+    if (statusRef.current !== "Ready - Start speaking!") return;
+
+    // Only schedule once per avatar "turn end".
+    if (!silenceCoachEligibleRef.current) return;
+
+    cancelSilenceCoach();
+
+    // Schedule coach message at 8 seconds
+    silenceCoachTimeoutRef.current = setTimeout(() => {
+      // Don't show if session ended, avatar resumed speaking, or user is speaking.
+      if (!isConnectedRef.current) return;
+      if (isAvatarAudioPlayingRef.current) return;
+      if (statusRef.current !== "Ready - Start speaking!") return;
+      if (!silenceCoachEligibleRef.current) return;
+
+      setSilenceCoachMessage("Say something");
+      playCoachSound();
+      // Mark consumed so it won't reappear until the next avatar turn end.
+      silenceCoachEligibleRef.current = false;
+
+      // Start countdown timer (25 seconds total - 8 seconds elapsed = 17 seconds remaining)
+      let remaining = Math.floor((SILENCE_AUTO_END_MS - SILENCE_COACH_MS) / 1000);
+      setCountdownSeconds(remaining);
+      // Play initial tick
+      playTimerTick();
+
+      countdownIntervalRef.current = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) {
+          if (countdownIntervalRef.current) {
+            clearInterval(countdownIntervalRef.current);
+            countdownIntervalRef.current = null;
+          }
+          setCountdownSeconds(null);
+        } else {
+          setCountdownSeconds(remaining);
+          // Play tick sound each second
+          playTimerTick();
+        }
+      }, 1000);
+    }, SILENCE_COACH_MS);
+
+    // Schedule auto-end at 20 seconds
+    silenceAutoEndTimeoutRef.current = setTimeout(() => {
+      if (!isConnectedRef.current) return;
+      if (isAvatarAudioPlayingRef.current) return;
+      if (statusRef.current !== "Ready - Start speaking!") return;
+
+      console.log("⏱️ Auto-ending session due to 25 seconds of silence");
+      // Set reason before ending
+      setSessionEndReason("inactivity");
+      setSilenceCoachMessage("Session ending due to inactivity...");
+      // Trigger end session after a brief moment to show the message
+      setTimeout(() => {
+        if (isConnectedRef.current) {
+          // Trigger disconnect by closing WebSocket and cleaning up
+          window.dispatchEvent(new CustomEvent("silence-auto-end"));
+        }
+      }, 1500);
+    }, SILENCE_AUTO_END_MS);
+  }, [cancelSilenceCoach, playCoachSound, playTimerTick]);
 
   // Validate transcript to filter out background audio/video content
   // This is purely cosmetic - only affects what's displayed, not audio processing
@@ -356,11 +575,6 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     const flushStart = Date.now();
     try {
       console.log(`📤 Flushing audio buffer (attempt ${retryCount + 1}) - size: ${payloadSize} chars, force: ${force}`);
-      if (force || payloadSize < 20000) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/bd86f80f-0f18-4670-92ee-7cb26cc4fc5e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'B',location:'app/session/[id]/page.tsx:flushAudioBuffer:beforeSend',message:'flush_audio_send',data:{force,retryCount,responseId:responseIdForFlush,payloadSize,bufferedCharsBefore:bufferedChars,bufferParts:audioBufferRef.current.length},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
-      }
       await avatarClientRef.current.speakPcmAudio(payload);
       lastAudioSentTimeRef.current = Date.now();
       const flushDuration = Date.now() - flushStart;
@@ -368,9 +582,6 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     } catch (error: any) {
       const errorMessage = error?.message || String(error);
       console.error(`❌ Error sending audio to avatar (attempt ${retryCount + 1}):`, errorMessage);
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/bd86f80f-0f18-4670-92ee-7cb26cc4fc5e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'C',location:'app/session/[id]/page.tsx:flushAudioBuffer:catch',message:'flush_audio_error',data:{force,retryCount,responseId:responseIdForFlush,payloadSize,errorMessage},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       
       // Retry logic: retry up to 2 times with exponential backoff
       if (retryCount < 2 && avatarClientRef.current) {
@@ -462,6 +673,15 @@ export default function SessionPage({ params }: { params: { id: string } }) {
       avatarClientRef.current.onAudioStateChange((isPlaying) => {
         isAvatarAudioPlayingRef.current = isPlaying;
         console.log(`🎤 Avatar audio state changed: ${isPlaying ? 'playing' : 'stopped'}`);
+        // End-of-turn silence coach: schedule after avatar stops; cancel when avatar resumes.
+        if (isPlaying) {
+          cancelSilenceCoach();
+          silenceCoachEligibleRef.current = false;
+        } else {
+          // Avatar finished a turn; allow exactly one coach prompt for this turn end.
+          silenceCoachEligibleRef.current = true;
+          scheduleSilenceCoach();
+        }
       });
 
       if (videoRef.current) {
@@ -595,9 +815,6 @@ export default function SessionPage({ params }: { params: { id: string } }) {
       return new Promise((resolve, reject) => {
         ws.onopen = async () => {
           setStatus("Connected to OpenAI ✓");
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/bd86f80f-0f18-4670-92ee-7cb26cc4fc5e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix-v2',hypothesisId:'E',location:'app/session/[id]/page.tsx:ws.onopen:v2',message:'instrumentation_active_v2',data:{avatarId},timestamp:Date.now()})}).catch(()=>{});
-          // #endregion
           
           // Only configure technical settings (transcription)
           // Don't override instructions or voice - let the prompt handle that
@@ -696,6 +913,9 @@ export default function SessionPage({ params }: { params: { id: string } }) {
 
             case "conversation.item.input_audio_transcription.completed":
               if (data.transcript && data.item_id) {
+                // User spoke: hide/cancel the silence coach.
+                cancelSilenceCoach();
+                silenceCoachEligibleRef.current = false;
                 // Filter out suspicious transcripts (background audio/video content)
                 // This only affects display - doesn't interfere with audio processing
                 if (!isValidUserTranscript(data.transcript)) {
@@ -759,6 +979,9 @@ export default function SessionPage({ params }: { params: { id: string } }) {
 
             case "input_audio_buffer.speech_started":
               setStatus("Listening...");
+              // User started speaking: hide/cancel the silence coach immediately.
+              cancelSilenceCoach();
+              silenceCoachEligibleRef.current = false;
               // Track when user starts speaking - this is the actual timestamp for their message
               const speechStartTime = Date.now();
               userSpeechStartTimeRef.current = speechStartTime;
@@ -781,15 +1004,9 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                 const cooldownOk = now - lastInterruptAtRef.current > 800;
 
                 if ((avatarIsPlaying || hasPendingAssistantAudio) && cooldownOk) {
-                  // #region agent log
-                  fetch('http://127.0.0.1:7242/ingest/bd86f80f-0f18-4670-92ee-7cb26cc4fc5e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A',location:'app/session/[id]/page.tsx:input_audio_buffer.speech_started:interrupt',message:'vad_interrupt_triggered',data:{avatarIsPlaying,hasPendingAssistantAudio,cooldownOk,responseId:currentAudioResponseIdRef.current,bufferParts:audioBufferRef.current.length,bufferedChars:audioBufferedCharsRef.current},timestamp:Date.now()})}).catch(()=>{});
-                  // #endregion
                   lastInterruptAtRef.current = now;
                   clearPendingAudio(true);
                 } else {
-                  // #region agent log
-                  fetch('http://127.0.0.1:7242/ingest/bd86f80f-0f18-4670-92ee-7cb26cc4fc5e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A',location:'app/session/[id]/page.tsx:input_audio_buffer.speech_started:skip',message:'vad_interrupt_skipped',data:{avatarIsPlaying,hasPendingAssistantAudio,cooldownOk,responseId:currentAudioResponseIdRef.current,bufferParts:audioBufferRef.current.length,bufferedChars:audioBufferedCharsRef.current},timestamp:Date.now()})}).catch(()=>{});
-                  // #endregion
                   // Don't nuke audio on likely false triggers.
                   console.log("⏸️ Skipping interrupt (likely VAD noise):", {
                     avatarIsPlaying,
@@ -836,10 +1053,6 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                   console.warn(`   Response text: "${tail}"`);
                   setStatus("⚠️ No audio received - response may have been too short");
                 }
-                
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/bd86f80f-0f18-4670-92ee-7cb26cc4fc5e',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix-v2',hypothesisId:'D',location:'app/session/[id]/page.tsx:response.done:v2',message:'response_done_snapshot_v2',data:{responseId:doneResponseId,eventType:data.type,audioDeltaCount:a?.deltaCount ?? null,audioTotalChars:a?.totalChars ?? null,msSinceLastAudioDelta:a?.lastAt ? Date.now()-a.lastAt : null,transcriptDeltaCount:t?.deltaCount ?? null,transcriptTotalChars:t?.totalChars ?? null,msSinceLastTranscriptDelta:t?.lastAt ? Date.now()-t.lastAt : null,bufferParts:audioBufferRef.current.length,bufferedChars:audioBufferedCharsRef.current,audioHasStarted:audioHasStartedRef.current,isAvatarPlaying:isAvatarAudioPlayingRef.current,assistantTail:tail ?? null},timestamp:Date.now()})}).catch(()=>{});
-                // #endregion
               }
               await flushAudioBuffer(true, 0);
               // Mark audio as finished in LiveAvatar
@@ -907,6 +1120,10 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     setIsStarting(true);
     setError(null);
     setHasUserStartedSpeaking(false); // Reset when starting new session
+    setSessionEndReason(null); // Clear any previous end reason
+    hasPlayedReadySoundRef.current = false; // Reset ready sound flag
+    cancelSilenceCoach();
+    silenceCoachEligibleRef.current = false;
     lastUserMessageTimestampRef.current = 0; // Reset timestamp tracking
     userSpeechStartTimeRef.current = null; // Reset speech start tracking
     pendingUserTranscriptRef.current = null; // Reset pending transcript
@@ -935,8 +1152,15 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     }
   };
 
-  const endSession = async () => {
+  const endSession = async (reason: "manual" | "inactivity" = "manual") => {
     try {
+      // Set end reason if not already set (for manual ends)
+      if (!sessionEndReason) {
+        setSessionEndReason(reason);
+      }
+      
+      cancelSilenceCoach();
+      silenceCoachEligibleRef.current = false;
       // Close WebSocket
       if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) {
         wsRef.current.close();
@@ -963,6 +1187,16 @@ export default function SessionPage({ params }: { params: { id: string } }) {
       if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
         await audioContextRef.current.close();
         audioContextRef.current = null;
+      }
+
+      // Close coach sound context
+      if (coachSoundContextRef.current && coachSoundContextRef.current.state !== 'closed') {
+        try {
+          await coachSoundContextRef.current.close();
+        } catch {
+          // Ignore
+        }
+        coachSoundContextRef.current = null;
       }
 
       // Stop health check
@@ -1030,6 +1264,31 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     };
   }, []);
 
+  // Listen for silence auto-end event (triggered after 25s of trainee silence)
+  useEffect(() => {
+    const handleAutoEnd = () => {
+      console.log("🔇 Silence auto-end event received");
+      endSession("inactivity");
+    };
+
+    window.addEventListener("silence-auto-end", handleAutoEnd);
+    return () => {
+      window.removeEventListener("silence-auto-end", handleAutoEnd);
+    };
+  }, []);
+
+  // Play sound when avatar is ready and "Say hello" appears (only once)
+  useEffect(() => {
+    if (isConnected && status === "Ready - Start speaking!" && !hasUserStartedSpeaking && !hasPlayedReadySoundRef.current) {
+      hasPlayedReadySoundRef.current = true;
+      playReadySound();
+    }
+    // Reset flag when user starts speaking
+    if (hasUserStartedSpeaking) {
+      hasPlayedReadySoundRef.current = false;
+    }
+  }, [isConnected, status, hasUserStartedSpeaking, playReadySound]);
+
   if (!avatar) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-8 bg-white">
@@ -1050,18 +1309,53 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     <main className="min-h-screen bg-slate-50 p-4 md:p-8">
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white px-4 py-2 shadow-sm">
+        <div className="flex items-center justify-between rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white px-4 py-3 shadow-sm">
           <div>
             <h1 className="text-sm font-medium text-slate-900">
               Training Session: {avatar.name} <span className="text-xs text-slate-500 font-normal">- {avatar.role} - {avatar.scenario}</span>
             </h1>
           </div>
-          <Link
-            href="/select-avatar"
-            className="px-3 py-1 text-slate-600 hover:text-slate-900 transition-colors text-xs border border-slate-200 hover:border-slate-300"
-          >
-            ← Back
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/"
+              className="group flex items-center gap-1.5 px-3 py-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 transition-all duration-200 rounded-lg text-xs font-medium border border-slate-200 hover:border-emerald-200"
+              title="Go to Home"
+            >
+              <svg 
+                className="w-4 h-4 transition-transform group-hover:scale-110" 
+                fill="none" 
+                viewBox="0 0 24 24" 
+                stroke="currentColor" 
+                strokeWidth={2}
+              >
+                <path 
+                  strokeLinecap="round" 
+                  strokeLinejoin="round" 
+                  d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" 
+                />
+              </svg>
+              <span>Home</span>
+            </Link>
+            <Link
+              href="/select-avatar"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-slate-600 hover:text-slate-900 transition-colors text-xs font-medium border border-slate-200 hover:border-slate-300 rounded-lg"
+            >
+              <svg 
+                className="w-4 h-4" 
+                fill="none" 
+                viewBox="0 0 24 24" 
+                stroke="currentColor" 
+                strokeWidth={2}
+              >
+                <path 
+                  strokeLinecap="round" 
+                  strokeLinejoin="round" 
+                  d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" 
+                />
+              </svg>
+              <span>Back</span>
+            </Link>
+          </div>
         </div>
 
         {/* Main Content Grid */}
@@ -1070,7 +1364,13 @@ export default function SessionPage({ params }: { params: { id: string } }) {
           <div className="lg:col-span-2 space-y-6">
             {/* Video Container */}
             <div className="rounded-2xl overflow-hidden border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white shadow-sm">
-              <div className="relative w-full aspect-video bg-slate-900">
+              <div className="relative w-full aspect-video bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+                {/* Animated background pattern */}
+                <div className="absolute inset-0 opacity-10">
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(16,185,129,0.1),transparent_50%)]"></div>
+                  <div className="absolute inset-0 bg-[linear-gradient(45deg,transparent_48%,rgba(16,185,129,0.03)_49%,rgba(16,185,129,0.03)_51%,transparent_52%)] bg-[length:20px_20px]"></div>
+                </div>
+                
                 <video
                   ref={videoRef}
                   autoPlay
@@ -1079,21 +1379,67 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                 />
                 
                 {!isConnected && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-slate-900/90 pointer-events-none">
-                    <div className="text-center space-y-6 p-8">
-                      <h2 className="text-2xl text-white font-light">
-                        Ready to begin your training
-                      </h2>
-                      <p className="text-slate-300 text-sm max-w-md">
-                        Click "Start Session" to connect with {avatar.name} and begin your conversation practice.
-                      </p>
-                      <button
-                        onClick={startSession}
-                        disabled={isStarting}
-                        className="pointer-events-auto px-10 py-4 bg-emerald-600 hover:bg-emerald-700 text-white text-lg font-semibold rounded-lg transition-colors duration-200 disabled:bg-slate-400 disabled:cursor-not-allowed"
-                      >
-                        {isStarting ? "Starting..." : "Start Session"}
-                      </button>
+                  <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-slate-900/95 via-slate-800/95 to-slate-900/95 backdrop-blur-sm pointer-events-none">
+                    <div className="text-center space-y-8 p-8 max-w-lg">
+                      {/* Video icon */}
+                      <div className="flex justify-center">
+                        <div className="relative">
+                          <div className="absolute inset-0 bg-emerald-500/20 rounded-full blur-xl animate-pulse"></div>
+                          <div className="relative bg-slate-800/80 backdrop-blur-sm border border-emerald-500/30 rounded-2xl p-5 shadow-2xl">
+                            <svg 
+                              className="w-14 h-14 text-emerald-400" 
+                              fill="none" 
+                              viewBox="0 0 24 24" 
+                              stroke="currentColor"
+                              strokeWidth={1.5}
+                            >
+                              <path 
+                                strokeLinecap="round" 
+                                strokeLinejoin="round" 
+                                d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" 
+                              />
+                            </svg>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Text content */}
+                      <div className="space-y-3">
+                        <h2 className="text-3xl text-white font-light tracking-tight">
+                          Ready to begin your training
+                        </h2>
+                        <p className="text-slate-300/90 text-base leading-relaxed max-w-md mx-auto">
+                          Click "Start Session" to connect with <span className="text-emerald-400 font-medium">{avatar.name}</span> and begin your conversation practice.
+                        </p>
+                      </div>
+                      
+                      {/* Start button */}
+                      <div className="pt-2">
+                        <button
+                          onClick={startSession}
+                          disabled={isStarting}
+                          className="pointer-events-auto group relative px-12 py-4 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white text-lg font-semibold rounded-xl transition-all duration-300 disabled:from-slate-500 disabled:to-slate-600 disabled:cursor-not-allowed shadow-lg hover:shadow-emerald-500/50 hover:scale-105 disabled:hover:scale-100 disabled:hover:shadow-lg"
+                        >
+                          <span className="relative flex items-center justify-center gap-2">
+                            {isStarting ? (
+                              <>
+                                <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                Starting...
+                              </>
+                            ) : (
+                              <>
+                                Start Session
+                                <svg className="w-5 h-5 transition-transform group-hover:translate-x-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                                </svg>
+                              </>
+                            )}
+                          </span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1409,6 +1755,52 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                     </p>
                   </div>
                 )}
+                {isConnected && silenceCoachMessage && (
+                  <div className={`mt-3 p-4 rounded-lg border-2 transition-all duration-300 ${
+                    silenceCoachMessage.includes("Session ending") 
+                      ? "bg-amber-50 border-amber-300 animate-pulse" 
+                      : "bg-blue-50 border-blue-200"
+                  }`}>
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">⏰</span>
+                        <p className={`text-xs font-bold uppercase tracking-wide ${
+                          silenceCoachMessage.includes("Session ending") 
+                            ? "text-amber-700" 
+                            : "text-blue-700"
+                        }`}>
+                          {silenceCoachMessage.includes("Session ending") ? "Notice" : "Reminder"}
+                        </p>
+                      </div>
+                      {!silenceCoachMessage.includes("Session ending") && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            cancelSilenceCoach();
+                            silenceCoachEligibleRef.current = false;
+                          }}
+                          className="text-xs font-medium text-blue-500 hover:text-blue-700 transition-colors"
+                        >
+                          Dismiss
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <p className={`text-sm font-medium ${
+                        silenceCoachMessage.includes("Session ending") 
+                          ? "text-amber-800" 
+                          : "text-blue-900"
+                      }`}>{silenceCoachMessage}</p>
+                      {countdownSeconds !== null && !silenceCoachMessage.includes("Session ending") && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-mono text-blue-600 font-bold">
+                            {countdownSeconds}s
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {connectedAt && (
@@ -1422,7 +1814,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
 
               {isConnected && (
                 <button
-                  onClick={endSession}
+                  onClick={() => endSession("manual")}
                   className="w-full px-4 py-3 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg transition-colors"
                 >
                   End Session
@@ -1439,6 +1831,65 @@ export default function SessionPage({ params }: { params: { id: string } }) {
           </div>
         </div>
       </div>
+
+      {/* Session End Modal - Shows when session ended due to inactivity */}
+      {sessionEndReason === "inactivity" && !isConnected && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 space-y-6 animate-in fade-in zoom-in duration-300 relative">
+            <button
+              onClick={() => setSessionEndReason(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 transition-colors"
+              aria-label="Close"
+            >
+              <svg 
+                className="w-6 h-6" 
+                fill="none" 
+                viewBox="0 0 24 24" 
+                stroke="currentColor"
+              >
+                <path 
+                  strokeLinecap="round" 
+                  strokeLinejoin="round" 
+                  strokeWidth={2} 
+                  d="M6 18L18 6M6 6l12 12" 
+                />
+              </svg>
+            </button>
+            
+            <div className="text-center space-y-4">
+              <div className="flex justify-center">
+                <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center">
+                  <svg 
+                    className="w-8 h-8 text-amber-600" 
+                    fill="none" 
+                    viewBox="0 0 24 24" 
+                    stroke="currentColor"
+                  >
+                    <path 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round" 
+                      strokeWidth={2} 
+                      d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" 
+                    />
+                  </svg>
+                </div>
+              </div>
+              
+              <div>
+                <h2 className="text-2xl font-semibold text-slate-900 mb-2">
+                  Session Ended
+                </h2>
+                <p className="text-slate-600">
+                  The session was automatically ended due to inactivity.
+                </p>
+                <p className="text-sm text-slate-500 mt-2">
+                  You were silent for 25 seconds after the avatar finished speaking.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

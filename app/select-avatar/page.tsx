@@ -6,17 +6,47 @@ import { avatars } from "@/lib/avatars";
 
 export default function SelectAvatarPage() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-8 bg-gradient-to-br from-emerald-50 via-white to-white">
-      <div className="max-w-4xl w-full space-y-12">
-        <div className="text-center space-y-4">
-          <h1 className="text-4xl font-light text-slate-900 tracking-tight">
-            Select Training Avatar
-          </h1>
-          <div className="w-16 h-0.5 bg-slate-900 mx-auto"></div>
-          <p className="text-slate-600 font-light">
-            Choose an avatar to practice your conversation skills
-          </p>
+    <main className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-white p-4 md:p-8">
+      <div className="max-w-7xl mx-auto space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white px-4 py-3 shadow-sm">
+          <div>
+            <h1 className="text-sm font-medium text-slate-900">
+              Select Training Avatar
+            </h1>
+          </div>
+          <Link
+            href="/"
+            className="group flex items-center gap-1.5 px-3 py-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 transition-all duration-200 rounded-lg text-xs font-medium border border-slate-200 hover:border-emerald-200"
+            title="Go to Home"
+          >
+            <svg 
+              className="w-4 h-4 transition-transform group-hover:scale-110" 
+              fill="none" 
+              viewBox="0 0 24 24" 
+              stroke="currentColor" 
+              strokeWidth={2}
+            >
+              <path 
+                strokeLinecap="round" 
+                strokeLinejoin="round" 
+                d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" 
+              />
+            </svg>
+            <span>Home</span>
+          </Link>
         </div>
+
+        <div className="max-w-4xl mx-auto space-y-12">
+          <div className="text-center space-y-4">
+            <h1 className="text-4xl font-light text-slate-900 tracking-tight">
+              Select Training Avatar
+            </h1>
+            <div className="w-16 h-0.5 bg-slate-900 mx-auto"></div>
+            <p className="text-slate-600 font-light">
+              Choose an avatar to practice your conversation skills
+            </p>
+          </div>
 
         <div className="grid md:grid-cols-2 gap-6">
           {avatars.map((avatar) => (
@@ -66,13 +96,6 @@ export default function SelectAvatarPage() {
           ))}
         </div>
 
-        <div className="text-center pt-4">
-          <Link
-            href="/"
-            className="inline-block px-5 py-2 text-slate-500 hover:text-slate-900 transition-colors duration-200 text-sm"
-          >
-            ← Back to Start
-          </Link>
         </div>
       </div>
     </main>
