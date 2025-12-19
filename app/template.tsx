@@ -13,7 +13,7 @@ export default function Template({ children }: { children: React.ReactNode }) {
     const timer = setTimeout(() => {
       setDisplayChildren(children);
       setIsVisible(true);
-    }, 150); // Half of transition duration for smooth crossfade
+    }, 100); // Smooth transition timing
 
     return () => clearTimeout(timer);
   }, [pathname, children]);
@@ -21,6 +21,7 @@ export default function Template({ children }: { children: React.ReactNode }) {
   return (
     <div
       className={`page-transition ${isVisible ? 'page-visible' : 'page-hidden'}`}
+      style={{ willChange: 'transform' }}
     >
       {displayChildren}
     </div>

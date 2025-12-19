@@ -149,15 +149,92 @@ body {
 /* Smooth scrolling for transcript */
 .smooth-scroll {
   scroll-behavior: smooth;
+  scroll-padding-top: 1rem;
+}
+
+/* Enhanced smooth scrolling */
+* {
+  scroll-behavior: smooth;
+}
+
+/* Smooth scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 4px;
+  transition: background 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
 }
 
 /* Enhanced button interactions */
 .btn-press {
-  transition: transform 0.1s ease;
+  transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.15s ease;
 }
 
 .btn-press:active {
   transform: scale(0.97);
+  transition: transform 0.08s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Smooth button hover effects */
+button, a {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform, background-color, border-color, color;
+}
+
+button:hover, a:hover {
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+button:active, a:active {
+  transition: all 0.08s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Smooth input/select interactions */
+input, select, textarea {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: border-color, box-shadow, background-color;
+}
+
+input:focus, select:focus, textarea:focus {
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Smooth card hover effects */
+.card-hover {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform, box-shadow, border-color;
+}
+
+.card-hover:hover {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Smooth icon transitions */
+svg {
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), color 0.2s ease;
+}
+
+/* Smooth opacity transitions */
+.opacity-transition {
+  transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Smooth scale transitions */
+.scale-transition {
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform;
 }
 
 /* Gradient animation for background */
@@ -178,16 +255,18 @@ body {
 /* Modern page transitions - subtle slide only, no dimming */
 .page-transition {
   transform: translateY(0);
-  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  will-change: transform;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease;
+  will-change: transform, opacity;
 }
 
 .page-transition.page-hidden {
-  transform: translateY(4px);
+  transform: translateY(8px);
+  opacity: 0.7;
 }
 
 .page-transition.page-visible {
   transform: translateY(0);
+  opacity: 1;
 }
 
 /* Respect reduced motion preference */
@@ -200,5 +279,100 @@ body {
   .page-transition.page-hidden {
     transform: none;
   }
+}
+
+/* Modal animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.modal-backdrop {
+  animation: fadeIn 0.2s ease-out;
+  backdrop-filter: blur(4px);
+  transition: backdrop-filter 0.2s ease, background-color 0.2s ease;
+}
+
+.modal-content {
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform, opacity;
+  transform-origin: center center;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
+}
+
+/* Smooth modal interactions */
+.modal-content button {
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.modal-content button:hover {
+  transform: translateY(-1px);
+}
+
+.modal-content button:active {
+  transform: translateY(0);
+}
+
+/* Respect reduced motion for modal */
+@media (prefers-reduced-motion: reduce) {
+  .modal-backdrop,
+  .modal-content {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  
+  button, a, input, select, textarea, svg, .card-hover, .opacity-transition, .scale-transition {
+    transition: none !important;
+  }
+}
+
+/* Smooth image loading */
+img {
+  transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Smooth range slider */
+input[type="range"] {
+  transition: accent-color 0.2s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.15s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(1.15);
+}
+
+input[type="range"]::-moz-range-thumb {
+  transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.15s ease;
+}
+
+input[type="range"]::-moz-range-thumb:hover {
+  transform: scale(1.1);
+}
+
+input[type="range"]::-moz-range-thumb:active {
+  transform: scale(1.15);
 }
 

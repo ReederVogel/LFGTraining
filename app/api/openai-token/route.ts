@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAvatarById } from "@/lib/avatars";
-import { buildSarahPrompt, PersonalityControls } from "@/lib/prompt-builder";
+import { buildDynamicPrompt, PersonalityControls } from "@/lib/prompt-builder";
 
 // This route must always run dynamically (no static optimization) because it
 // pulls secrets and calls external APIs.
@@ -12,14 +12,15 @@ export async function POST(request: Request) {
     const apiKey = process.env.OPENAI_API_KEY;
     
     if (!apiKey) {
-      console.error("OPENAI_API_KEY is not set in environment variables");
+      // Log error server-side only (not exposed to client)
+      if (process.env.NODE_ENV === 'development') {
+        console.error("OPENAI_API_KEY is not set in environment variables");
+      }
       return NextResponse.json(
-        { error: "OPENAI_API_KEY not configured. Please check your .env.local file and restart the dev server." },
+        { error: "Server configuration error. Please contact support." },
         { status: 500 }
       );
     }
-    
-    console.log("OpenAI API key found:", apiKey.substring(0, 10) + "...");
 
     // Get avatar ID and personality controls from request body
     const body = await request.json();
@@ -43,8 +44,8 @@ export async function POST(request: Request) {
       );
     }
 
-    // Validate personality controls if provided (for Sarah avatar)
-    if (avatarId === 'sarah' && controls) {
+    // Validate personality controls if provided (for avatars with custom persona support)
+    if (avatar.supportsCustomPersona && controls) {
       // Validate sadness level (1-5)
       if (controls.sadnessLevel < 1 || controls.sadnessLevel > 5) {
         return NextResponse.json(
@@ -82,14 +83,23 @@ export async function POST(request: Request) {
       voice: "shimmer" // Female voice optimized for natural, warm, emotional speech with accent support
     };
     
-    if (avatarId === 'sarah' && controls) {
-      // Use dynamic instructions for Sarah with personality controls
-      console.log("Using dynamic instructions for Sarah with controls:", controls);
-      const dynamicPrompt = buildSarahPrompt(controls);
+    if (avatar.supportsCustomPersona && controls) {
+      // Use dynamic instructions with personality controls
+      
+      // Ensure characterName is set (use avatar's name if not provided)
+      const controlsWithName = {
+        ...controls,
+        characterName: controls.characterName || avatar.name,
+        relationshipType: controls.relationshipType || avatar.relationshipType,
+        character: controls.character || avatar.defaultCharacter,
+        backstory: controls.backstory || avatar.defaultBackstory,
+        conversationGoal: controls.conversationGoal || avatar.defaultGoal,
+      };
+      
+      const dynamicPrompt = buildDynamicPrompt(controlsWithName);
       sessionConfig.instructions = dynamicPrompt;
     } else if (avatar.openaiPromptId) {
       // Use dashboard prompt for other avatars or if no controls
-      console.log("Using dashboard prompt ID:", avatar.openaiPromptId);
       sessionConfig.prompt = {
         id: avatar.openaiPromptId,
         version: avatar.openaiPromptVersion || "1"
@@ -121,14 +131,24 @@ export async function POST(request: Request) {
       } catch {
         errorMessage = errorText || errorMessage;
       }
-      console.error("OpenAI API error:", {
-        status: response.status,
-        statusText: response.statusText,
-        error: errorMessage
-      });
+      // Log error server-side only (not exposed to client)
+      if (process.env.NODE_ENV === 'development') {
+        console.error("OpenAI API error:", {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorMessage
+        });
+      }
+      // Don't expose internal error details to client
+      const clientMessage = response.status === 401 
+        ? "Authentication failed. Please check API configuration."
+        : response.status === 429
+        ? "Rate limit exceeded. Please try again later."
+        : "Failed to initialize session. Please try again.";
+      
       return NextResponse.json(
-        { error: `Failed to create OpenAI session: ${errorMessage}` },
-        { status: response.status }
+        { error: clientMessage },
+        { status: response.status >= 500 ? 500 : response.status }
       );
     }
 
@@ -136,9 +156,13 @@ export async function POST(request: Request) {
     return NextResponse.json(data);
     
   } catch (error: any) {
-    console.error("Error creating OpenAI token:", error);
+    // Log error server-side only (not exposed to client)
+    if (process.env.NODE_ENV === 'development') {
+      console.error("Error creating OpenAI token:", error);
+    }
+    // Don't expose internal error details to client
     return NextResponse.json(
-      { error: error.message },
+      { error: "Failed to initialize session. Please try again." },
       { status: 500 }
     );
   }

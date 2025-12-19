@@ -18,7 +18,7 @@ export default function Home() {
         <div className="pt-4">
           <Link
             href="/select-avatar"
-            className="inline-block px-10 py-4 bg-emerald-600 text-white text-base font-medium rounded-lg hover:bg-emerald-700 transition-colors duration-200 btn-primary"
+            className="inline-block px-10 py-4 bg-emerald-600 text-white text-base font-medium rounded-lg hover:bg-emerald-700 hover:shadow-lg hover:shadow-emerald-600/30 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out btn-primary"
           >
             Start Training
           </Link>

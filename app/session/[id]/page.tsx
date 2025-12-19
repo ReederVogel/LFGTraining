@@ -5,7 +5,12 @@ import Link from "next/link";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { createLiveAvatarClient, LiveAvatarClient } from "@/lib/liveavatar";
 import { getAvatarById } from "@/lib/avatars";
-import { PersonalityControls } from "@/lib/prompt-builder";
+import { 
+  PersonalityControls, 
+  DEFAULT_CHARACTER, 
+  DEFAULT_BACKSTORY, 
+  DEFAULT_CONVERSATION_GOAL 
+} from "@/lib/prompt-builder";
 
 const AVATAR_RESPONSE_DELAY_MS = 0; // No delay - avatar responds immediately
 
@@ -70,15 +75,45 @@ export default function SessionPage({ params }: { params: { id: string } }) {
   const [sessionEndReason, setSessionEndReason] = useState<"manual" | "inactivity" | null>(null);
   const [countdownSeconds, setCountdownSeconds] = useState<number | null>(null);
   
-  // Personality controls for Sarah avatar
-  const [personalityControls, setPersonalityControls] = useState<PersonalityControls>({
-    sadnessLevel: 3,  // Default: Moderate sadness
-    copingStyle: 'none',  // Default: No secondary coping style (just grief)
-    copingIntensity: 3,   // Default: Moderate intensity (if a coping style is selected)
-    accentType: 'none',  // Default: No accent
-    accentStrength: 0,   // Default: No accent strength
-    language: 'english',  // Default: English
+  // Load personality controls - start with defaults to prevent hydration mismatch
+  const [personalityControls, setPersonalityControls] = useState<PersonalityControls>(() => {
+    // Always use defaults for initial render (server and client must match)
+    return {
+      sadnessLevel: 3,
+      copingStyle: 'none',
+      copingIntensity: 3,
+      accentType: 'none',
+      accentStrength: 0,
+      language: 'english',
+      characterName: avatar?.name || 'Character',
+      relationshipType: avatar?.relationshipType,
+      character: avatar?.defaultCharacter || DEFAULT_CHARACTER,
+      backstory: avatar?.defaultBackstory || DEFAULT_BACKSTORY,
+      conversationGoal: avatar?.defaultGoal || DEFAULT_CONVERSATION_GOAL,
+    };
   });
+
+  // Load from localStorage after mount (prevents hydration mismatch)
+  useEffect(() => {
+    if (avatar?.supportsCustomPersona) {
+      const saved = localStorage.getItem(`avatar_${avatarId}_settings`);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          setPersonalityControls(parsed);
+        } catch (e) {
+          console.error('Failed to parse saved settings:', e);
+        }
+      }
+    }
+  }, [avatarId, avatar?.supportsCustomPersona]);
+  
+  // Check if persona fields are modified from defaults
+  const isCharacterModified = personalityControls.character !== (avatar?.defaultCharacter || DEFAULT_CHARACTER);
+  const isBackstoryModified = personalityControls.backstory !== (avatar?.defaultBackstory || DEFAULT_BACKSTORY);
+  const isGoalModified = personalityControls.conversationGoal !== (avatar?.defaultGoal || DEFAULT_CONVERSATION_GOAL);
+  const isAnyPersonaModified = isCharacterModified || isBackstoryModified || isGoalModified;
+  
 
   const getAccentDisplayName = (
     accentType: PersonalityControls["accentType"] | undefined
@@ -146,6 +181,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
   useEffect(() => {
     isConnectedRef.current = isConnected;
   }, [isConnected]);
+
 
   useEffect(() => {
     statusRef.current = status;
@@ -780,7 +816,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
         },
         body: JSON.stringify({
           avatarId: avatar.id,
-          controls: avatarId === 'sarah' ? personalityControls : undefined,
+          controls: avatar.supportsCustomPersona ? personalityControls : undefined,
         }),
       });
 
@@ -1312,13 +1348,16 @@ export default function SessionPage({ params }: { params: { id: string } }) {
         <div className="flex items-center justify-between rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white px-4 py-3 shadow-sm">
           <div>
             <h1 className="text-sm font-medium text-slate-900">
-              Training Session: {avatar.name} <span className="text-xs text-slate-500 font-normal">- {avatar.role} - {avatar.scenario}</span>
+              Training Session: {avatar?.role || avatar?.name || 'Avatar'}
             </h1>
+            <p className="text-[10px] text-slate-500 mt-0.5">
+              Customize the persona below to match your training scenario
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <Link
               href="/"
-              className="group flex items-center gap-1.5 px-3 py-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 transition-all duration-200 rounded-lg text-xs font-medium border border-slate-200 hover:border-emerald-200"
+              className="group flex items-center gap-1.5 px-3 py-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out rounded-lg text-xs font-medium border border-slate-200 hover:border-emerald-200"
               title="Go to Home"
             >
               <svg 
@@ -1338,7 +1377,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
             </Link>
             <Link
               href="/select-avatar"
-              className="flex items-center gap-1.5 px-3 py-1.5 text-slate-600 hover:text-slate-900 transition-colors text-xs font-medium border border-slate-200 hover:border-slate-300 rounded-lg"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-slate-600 hover:text-slate-900 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out text-xs font-medium border border-slate-200 hover:border-slate-300 rounded-lg"
             >
               <svg 
                 className="w-4 h-4" 
@@ -1361,7 +1400,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
         {/* Main Content Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left Column - Avatar Video */}
-          <div className="lg:col-span-2 space-y-6">
+          <div className="lg:col-span-2 space-y-6 lg:sticky lg:top-4 lg:self-start">
             {/* Video Container */}
             <div className="rounded-2xl overflow-hidden border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white shadow-sm">
               <div className="relative w-full aspect-video bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
@@ -1409,7 +1448,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                           Ready to begin your training
                         </h2>
                         <p className="text-slate-300/90 text-base leading-relaxed max-w-md mx-auto">
-                          Click "Start Session" to connect with <span className="text-emerald-400 font-medium">{avatar.name}</span> and begin your conversation practice.
+                          Click "Start Session" to connect with the <span className="text-emerald-400 font-medium">{avatar?.role || avatar?.name || 'Avatar'}</span> avatar and begin your conversation practice.
                         </p>
                       </div>
                       
@@ -1418,7 +1457,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                         <button
                           onClick={startSession}
                           disabled={isStarting}
-                          className="pointer-events-auto group relative px-12 py-4 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white text-lg font-semibold rounded-xl transition-all duration-300 disabled:from-slate-500 disabled:to-slate-600 disabled:cursor-not-allowed shadow-lg hover:shadow-emerald-500/50 hover:scale-105 disabled:hover:scale-100 disabled:hover:shadow-lg"
+                          className="pointer-events-auto group relative px-12 py-4 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white text-lg font-semibold rounded-xl transition-all duration-300 ease-out disabled:from-slate-500 disabled:to-slate-600 disabled:cursor-not-allowed shadow-lg hover:shadow-emerald-500/50 hover:scale-105 hover:-translate-y-1 active:translate-y-0 active:scale-100 disabled:hover:scale-100 disabled:hover:translate-y-0 disabled:hover:shadow-lg"
                         >
                           <span className="relative flex items-center justify-center gap-2">
                             {isStarting ? (
@@ -1456,7 +1495,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
               </div>
               <div 
                 ref={transcriptScrollRef}
-                className="bg-slate-50 p-4 min-h-[200px] max-h-[400px] overflow-y-auto"
+                className="bg-slate-50 p-4 min-h-[200px] max-h-[400px] overflow-y-auto smooth-scroll"
               >
                 {transcript.length > 0 ? (
                   <div className="space-y-3">
@@ -1465,7 +1504,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                       .map((event, index) => (
                         <div
                           key={`${event.id}-${index}`}
-                          className={`p-3 text-sm rounded-lg ${
+                          className={`p-3 text-sm rounded-lg transition-all duration-200 ease-out ${
                             event.speaker === "user"
                               ? "bg-emerald-600 text-white ml-8"
                               : "bg-white text-slate-900 mr-8 border border-slate-200"
@@ -1494,9 +1533,9 @@ export default function SessionPage({ params }: { params: { id: string } }) {
           </div>
 
           {/* Right Column - Status & Controls */}
-          <div className="space-y-6">
-            {/* Personality Controls - Only for Sarah and before session starts */}
-            {avatarId === 'sarah' && !isConnected && (
+          <div className="space-y-6 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto lg:pr-2 smooth-scroll">
+            {/* Personality Controls - Only for avatars with custom persona support and before session starts */}
+            {avatar?.supportsCustomPersona && !isConnected && (
               <div className="rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white p-6 shadow-sm backdrop-blur space-y-6">
                 <div className="flex items-start justify-between gap-4">
                   <h2 className="text-lg font-semibold text-slate-900">Avatar Settings</h2>
@@ -1519,7 +1558,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                         accentType: e.target.value === 'spanish' ? 'none' : prev.accentType,
                         accentStrength: e.target.value === 'spanish' ? 0 : prev.accentStrength,
                       }))}
-                      className="w-full px-3 py-2 text-sm border border-slate-300/80 rounded-lg bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                      className="w-full px-3 py-2 text-sm border border-slate-300/80 rounded-lg bg-white hover:border-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 transition-all duration-200 ease-out"
                       aria-label="Language selection"
                     >
                       <option value="english">English</option>
@@ -1553,7 +1592,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                           ...prev,
                           sadnessLevel: Number(e.target.value)
                         }))}
-                        className="w-full h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                        className="w-full h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 transition-all duration-200 ease-out"
                         aria-label="Sadness level"
                       />
                       <p className="text-xs text-slate-500">
@@ -1579,7 +1618,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                           ...prev,
                           copingStyle: e.target.value as 'none' | 'anger' | 'anxiety' | 'nervousness'
                         }))}
-                        className="w-full px-3 py-2 text-sm border border-slate-300/80 rounded-lg bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                        className="w-full px-3 py-2 text-sm border border-slate-300/80 rounded-lg bg-white hover:border-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 transition-all duration-200 ease-out"
                         aria-label="Coping style"
                       >
                         <option value="none">None</option>
@@ -1610,7 +1649,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                             ...prev,
                             copingIntensity: Number(e.target.value)
                           }))}
-                          className="w-full h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                          className="w-full h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 transition-all duration-200 ease-out"
                           aria-label="Coping intensity"
                         />
                         <p className="text-xs text-slate-500">
@@ -1645,7 +1684,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                             ? 0
                             : (prev.accentStrength && prev.accentStrength > 0 ? prev.accentStrength : 5)
                         }))}
-                        className="w-full px-3 py-2 text-sm border border-slate-300/80 rounded-lg bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                        className="w-full px-3 py-2 text-sm border border-slate-300/80 rounded-lg bg-white hover:border-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 transition-all duration-200 ease-out"
                         aria-label="Accent type"
                       >
                         <option value="none">None (Standard English)</option>
@@ -1677,7 +1716,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                             ...prev,
                             accentStrength: Number(e.target.value)
                           }))}
-                          className="w-full h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                          className="w-full h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 transition-all duration-200 ease-out"
                           aria-label="Accent strength"
                         />
                         <p className="text-xs text-slate-500">
@@ -1697,7 +1736,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
             )}
 
             {/* Show personality summary during session */}
-            {avatarId === 'sarah' && isConnected && (
+            {avatar?.supportsCustomPersona && isConnected && (
               <div className="rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white p-4 shadow-sm backdrop-blur">
                 <h3 className="text-sm font-semibold text-slate-900 mb-3">🔒 Active Settings</h3>
                 <div className="space-y-3 text-xs">
@@ -1779,7 +1818,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                             cancelSilenceCoach();
                             silenceCoachEligibleRef.current = false;
                           }}
-                          className="text-xs font-medium text-blue-500 hover:text-blue-700 transition-colors"
+                          className="text-xs font-medium text-blue-500 hover:text-blue-700 hover:underline transition-all duration-200 ease-out"
                         >
                           Dismiss
                         </button>
@@ -1815,7 +1854,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
               {isConnected && (
                 <button
                   onClick={() => endSession("manual")}
-                  className="w-full px-4 py-3 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg transition-colors"
+                  className="w-full px-4 py-3 bg-red-600 hover:bg-red-700 hover:shadow-lg hover:shadow-red-600/30 hover:-translate-y-0.5 active:translate-y-0 text-white font-medium rounded-lg transition-all duration-200 ease-out"
                 >
                   End Session
                 </button>
@@ -1838,7 +1877,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 space-y-6 animate-in fade-in zoom-in duration-300 relative">
             <button
               onClick={() => setSessionEndReason(null)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 transition-colors"
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 hover:rotate-90 active:rotate-0 transition-all duration-300 ease-out"
               aria-label="Close"
             >
               <svg 

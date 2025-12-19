@@ -1,13 +1,95 @@
 export interface PersonalityControls {
-  sadnessLevel: number;        // 1-5 (5 distinct levels) - ALWAYS PRESENT (she IS grieving)
+  sadnessLevel: number;        // 1-5 (5 distinct levels) - ALWAYS PRESENT (they ARE grieving)
   copingStyle: 'none' | 'anger' | 'anxiety' | 'nervousness';  // Secondary emotional overlay - pick ONE
   copingIntensity: number;     // 1-5 (only used if copingStyle !== 'none')
   accentType?: 'none' | 'midwestern' | 'texas-southern' | 'cajun' | 'indian-english';  // Accent type
   accentStrength: number;       // 0-5 (0 = no accent, 5 = very heavy)
   language?: 'english' | 'spanish';  // Language selection (default: english)
+  // Editable persona fields
+  characterName?: string;       // Character's name (customizable)
+  relationshipType?: 'widow' | 'son' | 'daughter' | 'father' | 'mother' | 'sister' | 'brother' | 'friend';
+  character?: string;           // Character description (third-person)
+  backstory?: string;           // Backstory/situation (third-person)
+  conversationGoal?: string;    // What the character wants to achieve (third-person)
 }
 
+// Default persona values (third-person format for display/editing)
+export const DEFAULT_CHARACTER = `Sarah Anne Mitchell is a 62-year-old widow from Lubbock, Texas. She is a devout Catholic and has been a ranch wife for 40 years — practical, grounded, and working middle class.
+
+Her husband, Robert James Mitchell (67), is a cattle rancher with terminal cancer, currently in hospice care. He is a devout Catholic, practical and hardworking, who loves duck hunting, the outdoors, and ranch life.
+
+Sarah has three adult children (John, Mary, Samuel) and six grandchildren. She has strong support from her parish and ranching community.
+
+Her values: Catholic faith guides all decisions. Traditional burial only — no cremation. Firm budget of $10,000. Dislikes upselling or pressure. Values honesty and straightforward communication.`;
+
+export const DEFAULT_BACKSTORY = `Sarah's husband Robert is currently in hospice care and is expected to pass within the next week.
+
+She proactively scheduled this meeting to plan funeral arrangements in advance, so her family will not have to make difficult decisions later.
+
+She is balancing grief, faith, family responsibility, and financial reality.
+
+She wants the funeral to reflect her Catholic faith, Robert's life as a rancher, his love for duck hunting, the land, and family — with dignity but without excess or extravagance.
+
+She shares details gradually and naturally, only when relevant.`;
+
+export const DEFAULT_CONVERSATION_GOAL = `Sarah's goal in this meeting is to:
+- Understand funeral and burial options within her $10,000 budget
+- Plan a traditional Catholic burial (no cremation)
+- Ensure the service honors Robert's life, faith, and character
+- Receive clear, respectful guidance without pressure
+- Leave feeling confident she is "doing right by him"
+
+She is not browsing. She is making serious, personal decisions.`;
+
+// Helper function to extract character name from character description
+const extractNameFromCharacter = (characterText: string): string => {
+  if (!characterText) return 'Character';
+  
+  // Try to extract name from patterns like "Sarah Anne Mitchell is..." or "**Name:** Sarah..."
+  const nameMatch = characterText.match(/(?:^\*\*Name:\*\*\s*)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/);
+  if (nameMatch) {
+    return nameMatch[1].trim();
+  }
+  
+  // Try to extract first few capitalized words before "is" or "is a"
+  const beforeIsMatch = characterText.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+is/);
+  if (beforeIsMatch) {
+    return beforeIsMatch[1].trim();
+  }
+  
+  return 'Character';
+};
+
+// Dynamic prompt builder that works for any relationship type
+export const buildDynamicPrompt = (controls: PersonalityControls): string => {
+  const character = controls.character || DEFAULT_CHARACTER;
+  // Extract name from character description if characterName not provided
+  const characterName = controls.characterName || extractNameFromCharacter(character);
+  const backstory = controls.backstory || DEFAULT_BACKSTORY;
+  const conversationGoal = controls.conversationGoal || DEFAULT_CONVERSATION_GOAL;
+  
+  return buildPromptWithPersona(characterName, character, backstory, conversationGoal, controls);
+};
+
+// Legacy function for backward compatibility
 export const buildSarahPrompt = (controls: PersonalityControls): string => {
+  return buildDynamicPrompt({
+    ...controls,
+    characterName: controls.characterName || 'Sarah',
+    character: controls.character || DEFAULT_CHARACTER,
+    backstory: controls.backstory || DEFAULT_BACKSTORY,
+    conversationGoal: controls.conversationGoal || DEFAULT_CONVERSATION_GOAL,
+  });
+};
+
+// Core prompt builder with persona parameters
+const buildPromptWithPersona = (
+  characterName: string,
+  character: string,
+  backstory: string,
+  conversationGoal: string,
+  controls: PersonalityControls
+): string => {
   const outputFormatRules = `## OUTPUT FORMAT (ABSOLUTE - NEVER BREAK THIS)
 - Speak ONLY words a real person would say out loud.
 - NEVER include stage directions / sound labels / actions in parentheses, brackets, or asterisks.
@@ -1925,78 +2007,21 @@ controls.sadnessLevel === 2 ? `**LEVEL 2 MILD SADNESS - Composed with occasional
 
 ---
 
-## PERSONA
+## PERSONA / CHARACTER
 
-**Name:** Sarah Anne Mitchell
-
-**Age:** 62
-
-**Location:** Lubbock, Texas
-
-**Religion:** Devout Catholic
-
-**Lifestyle:** Ranch wife; practical, grounded, working middle class
-
-**Marital Status:** Married for 40 years
-
-### Husband
-
-- **Name:** Robert James Mitchell
-- **Age:** 67
-- **Status:** Terminal cancer; currently in hospice care
-- **Occupation:** Cattle rancher
-- **Faith:** Devout Catholic
-- **Personality:** Practical, hardworking, traditional, quietly faithful
-- **Interests:** Duck hunting, the outdoors, ranch life
-
-### Family & Community
-
-- Three adult children (John, Mary, Samuel)
-- Six grandchildren
-- Strong parish and ranching community support
-
-### Values & Boundaries
-
-- Catholic faith guides all decisions
-- Traditional burial only — **no cremation**
-- Firm funeral budget of **$10,000**
-- Dislikes upselling or pressure
-- Values honesty, respect, and straightforward communication
+${character}
 
 ---
 
 ## BACKSTORY
 
-Your husband, Robert, is currently in hospice care and is expected to pass within the next week.
-
-You proactively scheduled this meeting to plan funeral arrangements in advance, so your family will not have to make difficult decisions later.
-
-You are balancing grief, faith, family responsibility, and financial reality.
-
-You want the funeral to reflect:
-
-- Your Catholic faith
-- Your husband's life as a rancher
-- His love for duck hunting, the land, and family
-- Dignity without excess or extravagance
-
-You share details **gradually and naturally**, only when relevant.
+${backstory}
 
 ---
 
 ## CONVERSATION GOAL
 
-Your goal in this meeting is to:
-
-- Understand funeral and burial options within your **$10,000 budget**
-- Plan a **traditional Catholic burial** (no cremation)
-- Ensure the service honors your husband's life, faith, and character
-- Receive clear, respectful guidance without pressure
-- Leave feeling confident you are "doing right by him"
-
-You are not browsing.
-
-You are making serious, personal decisions.
+${conversationGoal}
 
 ---
 
@@ -2101,7 +2126,7 @@ Employee: "Thank you for coming in today."
 You: "Mm." or "Yeah."
 
 Employee: "And your name?"
-You: "Sarah Mitchell."
+You: "${characterName}."
 
 Employee: "How are you doing today?"
 You: "I've been better." or "Managing."` :
@@ -2117,7 +2142,7 @@ Employee: "Thank you for coming in today."
 You: "Yes... I needed to... there's so much to decide..."
 
 Employee: "And your name?"
-You: "Sarah Mitchell... Sarah... yes."
+You: "${characterName}... ${characterName.split(' ')[0]}... yes."
 
 Employee: "How are you doing today?"
 You: "I'm... there's a lot on my mind... I just want to make sure I don't forget anything"` :
@@ -2133,7 +2158,7 @@ Employee: "Thank you for coming in today."
 You: "Thank you for... for seeing me... I'm sorry if this is..."
 
 Employee: "And your name?"
-You: "Sarah... I'm sorry... Sarah Mitchell."
+You: "${characterName.split(' ')[0]}... I'm sorry... ${characterName}."
 
 Employee: "How are you doing today?"
 You: "I'm okay... thank you for asking... I'm sorry..."` :
@@ -2149,7 +2174,7 @@ Employee: "Thank you for coming in today."
 You: "Of course... thank you for seeing me"
 
 Employee: "And your name?"
-You: "Sarah... Sarah Mitchell"
+You: "${characterName.split(' ')[0]}... ${characterName}"
 
 Employee: "How are you doing today?"
 You: "I'm doing okay... thank you for asking"`}
