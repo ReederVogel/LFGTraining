@@ -12,8 +12,8 @@ const createDefaultControls = (avatar: Avatar): PersonalityControls => ({
   sadnessLevel: 3,
   copingStyle: 'none',
   copingIntensity: 3,
-  accentType: 'none',
-  accentStrength: 0,
+  accentType: 'midwestern',
+  accentStrength: 5,
   language: 'english',
   characterName: avatar.name, // Keep for prompt builder, but not shown in UI
   relationshipType: avatar.relationshipType,
@@ -362,18 +362,19 @@ export default function SelectAvatarPage() {
   };
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-white p-4 md:p-8">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <main className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-white p-3 sm:p-4 md:p-6 lg:p-8">
+      <div className="max-w-7xl mx-auto space-y-4 sm:space-y-5 md:space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white px-4 py-3 shadow-sm">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 rounded-xl sm:rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white px-3 sm:px-4 py-2.5 sm:py-3 shadow-sm">
           <div>
-            <h1 className="text-sm font-medium text-slate-900">
+            <h1 className="text-xs sm:text-sm font-medium text-slate-900">
               Select Training Avatar
             </h1>
           </div>
           <Link
             href="/"
-            className="group flex items-center gap-1.5 px-3 py-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out rounded-lg text-xs font-medium border border-slate-200 hover:border-emerald-200"
+            className="group flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out rounded-lg text-xs font-medium border border-slate-200 hover:border-emerald-200 touch-manipulation min-h-[44px] sm:min-h-0"
+            style={{ touchAction: 'manipulation' }}
             title="Go to Home"
           >
             <svg 
@@ -393,18 +394,18 @@ export default function SelectAvatarPage() {
           </Link>
         </div>
 
-        <div className="max-w-4xl mx-auto space-y-12">
-          <div className="text-center space-y-4">
-            <h1 className="text-4xl font-light text-slate-900 tracking-tight">
+        <div className="max-w-4xl mx-auto space-y-8 sm:space-y-10 md:space-y-12">
+          <div className="text-center space-y-3 sm:space-y-4 px-4">
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-light text-slate-900 tracking-tight">
               Select & Customize Training Avatar
             </h1>
-            <div className="w-16 h-0.5 bg-slate-900 mx-auto"></div>
-            <p className="text-slate-600 font-light">
+            <div className="w-12 sm:w-14 md:w-16 h-0.5 bg-slate-900 mx-auto"></div>
+            <p className="text-sm sm:text-base text-slate-600 font-light max-w-2xl mx-auto">
               Choose an avatar and customize their persona for your training scenario
             </p>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5 md:gap-6">
             {avatars.map((avatar) => {
               const settings = avatarSettings[avatar.id];
               const isModalOpen = openModalAvatarId === avatar.id;
@@ -417,12 +418,12 @@ export default function SelectAvatarPage() {
                 >
                   {/* Image */}
                   {avatar.imageSrc && (
-                    <div className="relative w-full h-72 overflow-hidden bg-slate-50">
+                    <div className="relative w-full h-48 sm:h-52 md:h-56 overflow-hidden bg-slate-50">
                       <Image
                         src={avatar.imageSrc}
                         alt={`${avatar.name} avatar`}
                         fill
-                        sizes="(max-width: 768px) 100vw, 50vw"
+                        sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
                         className="object-cover object-center grayscale group-hover:grayscale-0 group-hover:scale-105 transition-all duration-500 ease-out"
                         quality={100}
                         priority
@@ -432,10 +433,10 @@ export default function SelectAvatarPage() {
                   )}
 
                   {/* Card content */}
-                  <div className="p-6 space-y-5">
+                  <div className="p-4 sm:p-5 space-y-3 sm:space-y-4">
                     <div className="flex items-start justify-between gap-3">
-                      <div className="space-y-1 flex-1">
-                        <h2 className="text-lg font-medium text-slate-900">
+                      <div className="space-y-1 flex-1 min-w-0">
+                        <h2 className="text-base sm:text-lg font-medium text-slate-900 truncate">
                           {avatar.name}
                         </h2>
                         <p className="text-xs uppercase tracking-wider text-slate-400 font-medium">
@@ -447,7 +448,8 @@ export default function SelectAvatarPage() {
                       {avatar.supportsCustomPersona && (
                         <button
                           onClick={() => openModal(avatar.id)}
-                          className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg hover:rotate-90 active:rotate-0 transition-all duration-300 ease-out"
+                          className="flex-shrink-0 p-2.5 sm:p-2 min-w-[44px] min-h-[44px] sm:min-w-0 sm:min-h-0 flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg hover:rotate-90 active:rotate-0 transition-all duration-300 ease-out touch-manipulation"
+                          style={{ touchAction: 'manipulation' }}
                           title="Customize Persona"
                         >
                           <svg
@@ -472,14 +474,15 @@ export default function SelectAvatarPage() {
                       )}
                     </div>
 
-                    <p className="text-sm text-slate-600 leading-relaxed">
+                    <p className="text-sm text-slate-600 leading-relaxed line-clamp-3">
                       {avatar.scenario}
                     </p>
 
                     {/* Start Session Button */}
                     <button
                       onClick={() => handleStartSession(avatar.id)}
-                      className="block w-full text-center px-5 py-3 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 hover:shadow-lg hover:shadow-emerald-600/30 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out btn-primary"
+                      className="block w-full text-center px-5 py-3 sm:py-3 min-h-[44px] flex items-center justify-center bg-emerald-600 text-white text-sm sm:text-base font-medium rounded-lg hover:bg-emerald-700 hover:shadow-lg hover:shadow-emerald-600/30 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out btn-primary touch-manipulation"
+                      style={{ touchAction: 'manipulation' }}
                     >
                       Start Session
                     </button>
@@ -500,7 +503,7 @@ export default function SelectAvatarPage() {
 
         return (
           <div 
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm modal-backdrop"
+            className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-sm modal-backdrop"
             onClick={(e) => {
               if (e.target === e.currentTarget) {
                 closeModal();
@@ -509,17 +512,18 @@ export default function SelectAvatarPage() {
           >
             <div
               ref={modalRef}
-              className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col modal-content"
+              className="bg-white rounded-none sm:rounded-2xl shadow-2xl max-w-3xl w-full h-full sm:h-auto sm:max-h-[90vh] overflow-hidden flex flex-col modal-content"
             >
               {/* Modal Header */}
-              <div className="flex items-center justify-between p-6 border-b border-slate-200">
-                <div>
-                  <h2 className="text-xl font-semibold text-slate-900">Customize Persona</h2>
-                  <p className="text-sm text-slate-500 mt-1">{avatar.role}</p>
+              <div className="flex items-center justify-between p-4 sm:p-6 border-b border-slate-200 flex-shrink-0">
+                <div className="min-w-0 flex-1 pr-2">
+                  <h2 className="text-lg sm:text-xl font-semibold text-slate-900 truncate">Customize Persona</h2>
+                  <p className="text-xs sm:text-sm text-slate-500 mt-1 truncate">{avatar.role}</p>
                 </div>
                 <button
                   onClick={closeModal}
-                  className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg hover:rotate-90 active:rotate-0 transition-all duration-300 ease-out"
+                  className="flex-shrink-0 p-2.5 sm:p-2 min-w-[44px] min-h-[44px] sm:min-w-0 sm:min-h-0 flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg hover:rotate-90 active:rotate-0 transition-all duration-300 ease-out touch-manipulation"
+                  style={{ touchAction: 'manipulation' }}
                   title="Close"
                 >
                   <svg
@@ -535,10 +539,10 @@ export default function SelectAvatarPage() {
               </div>
 
               {/* Modal Content - Scrollable */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
                 {/* Important Note */}
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                  <div className="flex items-start gap-2">
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 sm:p-3">
+                  <div className="flex items-start gap-2 sm:gap-2">
                     <svg
                       className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5"
                       fill="none"
@@ -552,7 +556,7 @@ export default function SelectAvatarPage() {
                         d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                       />
                     </svg>
-                    <div className="flex-1">
+                    <div className="flex-1 min-w-0">
                       <p className="text-xs text-amber-800 leading-relaxed">
                         <strong>Customize for {avatar.role} scenario:</strong> Ensure the character description, backstory, and conversation goal match this relationship type. 
                         {avatar.relationshipType === 'widow' && ' Character should be a woman who lost her husband.'}
@@ -570,15 +574,16 @@ export default function SelectAvatarPage() {
 
                 {/* Character Description */}
                 <div>
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-2 mb-2">
                     <label className="text-sm font-medium text-slate-700">
                       Character Description
                     </label>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 w-full sm:w-auto">
                       {isGenerating && generatingField?.field === 'character' ? (
                         <button
                           onClick={stopGeneration}
-                          className="text-xs px-3 py-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out font-medium"
+                          className="flex-1 sm:flex-none text-xs px-3 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out font-medium touch-manipulation"
+                          style={{ touchAction: 'manipulation' }}
                         >
                           Stop
                         </button>
@@ -586,14 +591,16 @@ export default function SelectAvatarPage() {
                         <button
                           onClick={() => generatePersonaField(openModalAvatarId, 'character')}
                           disabled={isGenerating}
-                          className="text-xs px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none font-medium"
+                          className="flex-1 sm:flex-none text-xs px-3 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none font-medium touch-manipulation"
+                          style={{ touchAction: 'manipulation' }}
                         >
                           ✨ Format
                         </button>
                       )}
                       <button
                         onClick={() => updateSettings(openModalAvatarId, { character: avatar.defaultCharacter })}
-                        className="text-xs px-3 py-1.5 bg-slate-50 text-slate-600 rounded-lg hover:bg-slate-100 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out font-medium"
+                        className="flex-1 sm:flex-none text-xs px-3 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 bg-slate-50 text-slate-600 rounded-lg hover:bg-slate-100 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out font-medium touch-manipulation"
+                        style={{ touchAction: 'manipulation' }}
                       >
                         Reset
                       </button>
@@ -605,7 +612,7 @@ export default function SelectAvatarPage() {
                       onChange={(e) => updateSettings(openModalAvatarId, { character: e.target.value })}
                       rows={6}
                       disabled={isGenerating}
-                      className={`w-full px-4 py-3 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent resize-none font-mono leading-relaxed transition-all duration-200 ease-out ${
+                      className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent resize-none font-mono leading-relaxed transition-all duration-200 ease-out ${
                         isGenerating && generatingField?.field === 'character'
                           ? 'border-emerald-300 bg-emerald-50/30 animate-pulse'
                           : 'border-slate-300 bg-white hover:border-slate-400'
@@ -629,15 +636,16 @@ export default function SelectAvatarPage() {
 
                 {/* Backstory */}
                 <div>
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-2 mb-2">
                     <label className="text-sm font-medium text-slate-700">
                       Backstory
                     </label>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 w-full sm:w-auto">
                       {isGenerating && generatingField?.field === 'backstory' ? (
                         <button
                           onClick={stopGeneration}
-                          className="text-xs px-3 py-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out font-medium"
+                          className="flex-1 sm:flex-none text-xs px-3 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out font-medium touch-manipulation"
+                          style={{ touchAction: 'manipulation' }}
                         >
                           Stop
                         </button>
@@ -645,14 +653,16 @@ export default function SelectAvatarPage() {
                         <button
                           onClick={() => generatePersonaField(openModalAvatarId, 'backstory')}
                           disabled={isGenerating}
-                          className="text-xs px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none font-medium"
+                          className="flex-1 sm:flex-none text-xs px-3 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none font-medium touch-manipulation"
+                          style={{ touchAction: 'manipulation' }}
                         >
                           ✨ Format
                         </button>
                       )}
                       <button
                         onClick={() => updateSettings(openModalAvatarId, { backstory: avatar.defaultBackstory })}
-                        className="text-xs px-3 py-1.5 bg-slate-50 text-slate-600 rounded-lg hover:bg-slate-100 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out font-medium"
+                        className="flex-1 sm:flex-none text-xs px-3 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 bg-slate-50 text-slate-600 rounded-lg hover:bg-slate-100 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out font-medium touch-manipulation"
+                        style={{ touchAction: 'manipulation' }}
                       >
                         Reset
                       </button>
@@ -664,7 +674,7 @@ export default function SelectAvatarPage() {
                       onChange={(e) => updateSettings(openModalAvatarId, { backstory: e.target.value })}
                       rows={6}
                       disabled={isGenerating}
-                      className={`w-full px-4 py-3 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent resize-none font-mono leading-relaxed transition-all duration-200 ease-out ${
+                      className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent resize-none font-mono leading-relaxed transition-all duration-200 ease-out ${
                         isGenerating && generatingField?.field === 'backstory'
                           ? 'border-emerald-300 bg-emerald-50/30 animate-pulse'
                           : 'border-slate-300 bg-white hover:border-slate-400'
@@ -688,15 +698,16 @@ export default function SelectAvatarPage() {
 
                 {/* Conversation Goal */}
                 <div>
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-2 mb-2">
                     <label className="text-sm font-medium text-slate-700">
                       Conversation Goal
                     </label>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 w-full sm:w-auto">
                       {isGenerating && generatingField?.field === 'conversationGoal' ? (
                         <button
                           onClick={stopGeneration}
-                          className="text-xs px-3 py-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out font-medium"
+                          className="flex-1 sm:flex-none text-xs px-3 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out font-medium touch-manipulation"
+                          style={{ touchAction: 'manipulation' }}
                         >
                           Stop
                         </button>
@@ -704,14 +715,16 @@ export default function SelectAvatarPage() {
                         <button
                           onClick={() => generatePersonaField(openModalAvatarId, 'conversationGoal')}
                           disabled={isGenerating}
-                          className="text-xs px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none font-medium"
+                          className="flex-1 sm:flex-none text-xs px-3 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none font-medium touch-manipulation"
+                          style={{ touchAction: 'manipulation' }}
                         >
                           ✨ Format
                         </button>
                       )}
                       <button
                         onClick={() => updateSettings(openModalAvatarId, { conversationGoal: avatar.defaultGoal })}
-                        className="text-xs px-3 py-1.5 bg-slate-50 text-slate-600 rounded-lg hover:bg-slate-100 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out font-medium"
+                        className="flex-1 sm:flex-none text-xs px-3 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 bg-slate-50 text-slate-600 rounded-lg hover:bg-slate-100 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out font-medium touch-manipulation"
+                        style={{ touchAction: 'manipulation' }}
                       >
                         Reset
                       </button>
@@ -723,7 +736,7 @@ export default function SelectAvatarPage() {
                       onChange={(e) => updateSettings(openModalAvatarId, { conversationGoal: e.target.value })}
                       rows={6}
                       disabled={isGenerating}
-                      className={`w-full px-4 py-3 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent resize-none font-mono leading-relaxed transition-all duration-200 ease-out ${
+                      className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent resize-none font-mono leading-relaxed transition-all duration-200 ease-out ${
                         isGenerating && generatingField?.field === 'conversationGoal'
                           ? 'border-emerald-300 bg-emerald-50/30 animate-pulse'
                           : 'border-slate-300 bg-white hover:border-slate-400'
@@ -756,7 +769,8 @@ export default function SelectAvatarPage() {
                 <div className="pt-4 border-t border-slate-200">
                   <button
                     onClick={() => resetToDefaults(openModalAvatarId)}
-                    className="w-full px-4 py-2.5 text-sm text-slate-600 hover:text-slate-900 border border-slate-300 rounded-lg hover:bg-slate-50 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out font-medium"
+                    className="w-full px-4 py-3 sm:py-2.5 min-h-[44px] sm:min-h-0 text-sm text-slate-600 hover:text-slate-900 border border-slate-300 rounded-lg hover:bg-slate-50 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out font-medium touch-manipulation"
+                    style={{ touchAction: 'manipulation' }}
                   >
                     Reset All to Defaults
                   </button>
@@ -764,10 +778,11 @@ export default function SelectAvatarPage() {
               </div>
 
               {/* Modal Footer */}
-              <div className="flex items-center justify-end gap-3 p-6 border-t border-slate-200 bg-slate-50">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2 sm:gap-3 p-4 sm:p-6 border-t border-slate-200 bg-slate-50 flex-shrink-0">
                 <button
                   onClick={closeModal}
-                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out"
+                  className="w-full sm:w-auto px-4 py-3 sm:py-2 min-h-[44px] sm:min-h-0 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out touch-manipulation"
+                  style={{ touchAction: 'manipulation' }}
                 >
                   Cancel
                 </button>
@@ -776,7 +791,8 @@ export default function SelectAvatarPage() {
                     closeModal();
                     handleStartSession(openModalAvatarId);
                   }}
-                  className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 hover:shadow-lg hover:shadow-emerald-600/30 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out"
+                  className="w-full sm:w-auto px-4 py-3 sm:py-2 min-h-[44px] sm:min-h-0 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 hover:shadow-lg hover:shadow-emerald-600/30 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out touch-manipulation"
+                  style={{ touchAction: 'manipulation' }}
                 >
                   Save & Start Session
                 </button>
@@ -789,16 +805,16 @@ export default function SelectAvatarPage() {
       {/* Confirmation Dialog for Edited Fields */}
       {showConfirmDialog && pendingSessionStart && (
         <div 
-          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-4 bg-black/50 backdrop-blur-sm"
           onClick={(e) => {
             if (e.target === e.currentTarget) {
               cancelSessionStart();
             }
           }}
         >
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-4 sm:p-6 space-y-4">
             <div>
-              <h3 className="text-lg font-semibold text-slate-900 mb-2">
+              <h3 className="text-base sm:text-lg font-semibold text-slate-900 mb-2">
                 Confirm Fields Are Correct
               </h3>
               <p className="text-sm text-slate-600">
@@ -806,16 +822,18 @@ export default function SelectAvatarPage() {
               </p>
             </div>
 
-            <div className="flex items-center gap-3 pt-2">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 pt-2">
               <button
                 onClick={cancelSessionStart}
-                className="flex-1 px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out"
+                className="flex-1 px-4 py-3 sm:py-2 min-h-[44px] sm:min-h-0 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out touch-manipulation"
+                style={{ touchAction: 'manipulation' }}
               >
                 Cancel
               </button>
               <button
                 onClick={confirmAndStartSession}
-                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 hover:shadow-lg hover:shadow-emerald-600/30 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out"
+                className="flex-1 px-4 py-3 sm:py-2 min-h-[44px] sm:min-h-0 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 hover:shadow-lg hover:shadow-emerald-600/30 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out touch-manipulation"
+                style={{ touchAction: 'manipulation' }}
               >
                 Yes, Start Session
               </button>

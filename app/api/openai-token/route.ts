@@ -65,7 +65,7 @@ export async function POST(request: Request) {
       }
       
       // Validate accent strength if accent type is set
-      if (controls.accentType && controls.accentType !== 'none') {
+      if (controls.accentType) {
         if (controls.accentStrength < 0 || controls.accentStrength > 5) {
           return NextResponse.json(
             { error: "accentStrength must be between 0 and 5 when accentType is set" },
@@ -76,11 +76,11 @@ export async function POST(request: Request) {
     }
 
     // Build session configuration based on avatar and controls
-    // Using "shimmer" voice - optimized for natural, warm, emotional speech
-    // This voice works well with accents and emotional variations
+    // Select voice based on avatar: "ash" for son (Michael), "shimmer" for widow (Sarah)
+    const voice = avatar.id === "michael" ? "ash" : "shimmer";
     let sessionConfig: any = {
       model: "gpt-realtime",
-      voice: "shimmer" // Female voice optimized for natural, warm, emotional speech with accent support
+      voice: voice
     };
     
     if (avatar.supportsCustomPersona && controls) {

@@ -30,6 +30,7 @@ How Sarah copes with her grief. Choose ONE or none:
 | **Anger** | Defensive, guarded, suspicious | Stay calm, don't take personally |
 | **Anxiety** | Worried, overthinking, panicking about decisions | Reassure, organize, slow down |
 | **Nervousness** | Hesitant, uncertain, afraid to be a burden | Encourage, normalize, build comfort |
+| **Indecisiveness** | Can't choose, asks "what do most people do?", wants guidance | Guide gently, narrow options, reassure |
 
 **3. Coping Intensity (1-5 scale) - Only if coping style selected**
 
@@ -50,6 +51,7 @@ How Sarah copes with her grief. Choose ONE or none:
 - `getAngerLevel(level)` - 5 levels of anger coping
 - `getAnxietyLevel(level)` - 5 levels of anxiety coping
 - `getNervousnessLevel(level)` - 5 levels of nervousness coping
+- `getIndecisivenessLevel(level)` - 5 levels of indecisiveness coping
 - Helper functions for greeting behavior, tone, and examples
 
 ### 2. `app/api/openai-token/route.ts`
@@ -61,7 +63,7 @@ How Sarah copes with her grief. Choose ONE or none:
 - `personalityControls` state with default values
 - UI controls appear ONLY for Sarah avatar and ONLY before session starts
 - Sadness slider (1-5)
-- Coping Style dropdown (None / Anger / Anxiety / Nervousness)
+- Coping Style dropdown (None / Anger / Anxiety / Nervousness / Indecisiveness)
 - Coping Intensity slider (1-5, only visible when coping style selected)
 - During session: shows active settings as read-only summary
 
@@ -95,6 +97,11 @@ How Sarah copes with her grief. Choose ONE or none:
 - Sadness: 2
 - Coping Style: Nervousness (4)
 → Mildly sad + very hesitant - needs encouragement and permission to ask questions
+
+**Indecisive Client:**
+- Sadness: 3
+- Coping Style: Indecisiveness (4)
+→ Moderately sad + can't make decisions - needs patient guidance, narrowing options, and reassurance that their choices are "normal"
 
 **Ideal Benchmark:**
 - Sadness: 3
@@ -156,6 +163,26 @@ How Sarah copes with her grief. Choose ONE or none:
 - No excessive politeness
 - Confident in the interaction
 
+### Indecisiveness Coping
+
+**Level 5 - Paralyzed:**
+- Cannot make any decisions: "I don't know... I just don't know..."
+- Begs for guidance: "Please just tell me what to pick"
+- Asks about norms constantly: "What do most people choose? I'll do that."
+- Goes in circles: "Maybe this one... no wait... or that..."
+- Wants to follow, not lead: "Just tell me what to do and I'll do it"
+
+**Level 3 - Noticeably Indecisive:**
+- Asks what others do: "What do most families choose?"
+- Seeks guidance: "What would you recommend?"
+- Comparison paralysis: "They both seem nice..."
+- Expresses uncertainty: "I'm not sure which one..."
+
+**Level 1 - Decisive:**
+- States preferences directly
+- Makes choices confidently
+- No need to ask what others do
+
 ## Technical Details
 
 ### Prompt Integration
@@ -211,4 +238,4 @@ The personality controls inject behavioral instructions into dedicated sections:
 - Default values provide a balanced, realistic training scenario (Sadness 3, No coping style)
 - Extreme values create edge cases useful for advanced training
 - The prompt maintains all original Sarah persona details while layering personality calibration on top
-- Anxiety and Nervousness are NEW - teach different trainee skills than Anger
+- Anxiety, Nervousness, and Indecisiveness are distinct coping styles - each teaches different trainee skills

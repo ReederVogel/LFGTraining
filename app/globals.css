@@ -2,6 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Mobile-first optimizations */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -moz-text-size-adjust: 100%;
+  -ms-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   color: #0f172a;
   background: #ffffff;
@@ -10,6 +22,19 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* Ensure touch targets are at least 44x44px on mobile */
+@media (max-width: 640px) {
+  button, a, input[type="button"], input[type="submit"], input[type="reset"] {
+    min-height: 44px;
+  }
+  
+  /* Improve touch scrolling */
+  * {
+    -webkit-overflow-scrolling: touch;
+  }
 }
 
 .btn-primary {

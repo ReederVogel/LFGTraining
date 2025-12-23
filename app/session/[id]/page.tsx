@@ -82,8 +82,8 @@ export default function SessionPage({ params }: { params: { id: string } }) {
       sadnessLevel: 3,
       copingStyle: 'none',
       copingIntensity: 3,
-      accentType: 'none',
-      accentStrength: 0,
+      accentType: 'midwestern',
+      accentStrength: 5,
       language: 'english',
       characterName: avatar?.name || 'Character',
       relationshipType: avatar?.relationshipType,
@@ -118,11 +118,10 @@ export default function SessionPage({ params }: { params: { id: string } }) {
   const getAccentDisplayName = (
     accentType: PersonalityControls["accentType"] | undefined
   ): string => {
-    if (!accentType || accentType === "none") return "None (Standard English)";
+    if (!accentType) return "Midwestern";
     if (accentType === "midwestern") return "Midwestern";
     if (accentType === "texas-southern") return "Texas Southern";
     if (accentType === "cajun") return "Cajun";
-    if (accentType === "indian-english") return "Indian";
     return String(accentType);
   };
   
@@ -1342,22 +1341,20 @@ export default function SessionPage({ params }: { params: { id: string } }) {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 p-4 md:p-8">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <main className="min-h-screen bg-slate-50 p-3 sm:p-4 md:p-6 lg:p-8">
+      <div className="max-w-7xl mx-auto space-y-4 sm:space-y-5 md:space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white px-4 py-3 shadow-sm">
-          <div>
-            <h1 className="text-sm font-medium text-slate-900">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 rounded-xl sm:rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white px-3 sm:px-4 py-2.5 sm:py-3 shadow-sm">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-xs sm:text-sm font-medium text-slate-900 truncate">
               Training Session: {avatar?.role || avatar?.name || 'Avatar'}
             </h1>
-            <p className="text-[10px] text-slate-500 mt-0.5">
-              Customize the persona below to match your training scenario
-            </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <Link
               href="/"
-              className="group flex items-center gap-1.5 px-3 py-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out rounded-lg text-xs font-medium border border-slate-200 hover:border-emerald-200"
+              className="group flex items-center gap-1.5 px-3 py-2 sm:py-1.5 min-h-[44px] sm:min-h-0 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out rounded-lg text-xs font-medium border border-slate-200 hover:border-emerald-200 touch-manipulation flex-1 sm:flex-none justify-center"
+              style={{ touchAction: 'manipulation' }}
               title="Go to Home"
             >
               <svg 
@@ -1373,11 +1370,12 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                   d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" 
                 />
               </svg>
-              <span>Home</span>
+              <span className="hidden xs:inline">Home</span>
             </Link>
             <Link
               href="/select-avatar"
-              className="flex items-center gap-1.5 px-3 py-1.5 text-slate-600 hover:text-slate-900 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out text-xs font-medium border border-slate-200 hover:border-slate-300 rounded-lg"
+              className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 min-h-[44px] sm:min-h-0 text-slate-600 hover:text-slate-900 hover:shadow-sm hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 ease-out text-xs font-medium border border-slate-200 hover:border-slate-300 rounded-lg touch-manipulation flex-1 sm:flex-none justify-center"
+              style={{ touchAction: 'manipulation' }}
             >
               <svg 
                 className="w-4 h-4" 
@@ -1398,11 +1396,11 @@ export default function SessionPage({ params }: { params: { id: string } }) {
         </div>
 
         {/* Main Content Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-5 md:gap-6">
           {/* Left Column - Avatar Video */}
-          <div className="lg:col-span-2 space-y-6 lg:sticky lg:top-4 lg:self-start">
+          <div className="lg:col-span-2 space-y-4 sm:space-y-5 md:space-y-6 lg:sticky lg:top-4 lg:self-start">
             {/* Video Container */}
-            <div className="rounded-2xl overflow-hidden border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white shadow-sm">
+            <div className="rounded-xl sm:rounded-2xl overflow-hidden border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white shadow-sm">
               <div className="relative w-full aspect-video bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
                 {/* Animated background pattern */}
                 <div className="absolute inset-0 opacity-10">
@@ -1419,14 +1417,14 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                 
                 {!isConnected && (
                   <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-slate-900/95 via-slate-800/95 to-slate-900/95 backdrop-blur-sm pointer-events-none">
-                    <div className="text-center space-y-8 p-8 max-w-lg">
+                    <div className="text-center space-y-6 sm:space-y-8 p-4 sm:p-6 md:p-8 max-w-lg w-full">
                       {/* Video icon */}
                       <div className="flex justify-center">
                         <div className="relative">
                           <div className="absolute inset-0 bg-emerald-500/20 rounded-full blur-xl animate-pulse"></div>
-                          <div className="relative bg-slate-800/80 backdrop-blur-sm border border-emerald-500/30 rounded-2xl p-5 shadow-2xl">
+                          <div className="relative bg-slate-800/80 backdrop-blur-sm border border-emerald-500/30 rounded-xl sm:rounded-2xl p-4 sm:p-5 shadow-2xl">
                             <svg 
-                              className="w-14 h-14 text-emerald-400" 
+                              className="w-10 h-10 sm:w-12 md:w-14 sm:h-12 md:h-14 text-emerald-400" 
                               fill="none" 
                               viewBox="0 0 24 24" 
                               stroke="currentColor"
@@ -1443,11 +1441,11 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                       </div>
                       
                       {/* Text content */}
-                      <div className="space-y-3">
-                        <h2 className="text-3xl text-white font-light tracking-tight">
+                      <div className="space-y-2 sm:space-y-3">
+                        <h2 className="text-xl sm:text-2xl md:text-3xl text-white font-light tracking-tight px-2">
                           Ready to begin your training
                         </h2>
-                        <p className="text-slate-300/90 text-base leading-relaxed max-w-md mx-auto">
+                        <p className="text-slate-300/90 text-sm sm:text-base leading-relaxed max-w-md mx-auto px-2">
                           Click "Start Session" to connect with the <span className="text-emerald-400 font-medium">{avatar?.role || avatar?.name || 'Avatar'}</span> avatar and begin your conversation practice.
                         </p>
                       </div>
@@ -1457,7 +1455,8 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                         <button
                           onClick={startSession}
                           disabled={isStarting}
-                          className="pointer-events-auto group relative px-12 py-4 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white text-lg font-semibold rounded-xl transition-all duration-300 ease-out disabled:from-slate-500 disabled:to-slate-600 disabled:cursor-not-allowed shadow-lg hover:shadow-emerald-500/50 hover:scale-105 hover:-translate-y-1 active:translate-y-0 active:scale-100 disabled:hover:scale-100 disabled:hover:translate-y-0 disabled:hover:shadow-lg"
+                          className="pointer-events-auto group relative w-full sm:w-auto px-8 sm:px-10 md:px-12 py-3 sm:py-3.5 md:py-4 min-h-[48px] sm:min-h-0 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white text-base sm:text-lg font-semibold rounded-xl transition-all duration-300 ease-out disabled:from-slate-500 disabled:to-slate-600 disabled:cursor-not-allowed shadow-lg hover:shadow-emerald-500/50 hover:scale-105 hover:-translate-y-1 active:translate-y-0 active:scale-100 disabled:hover:scale-100 disabled:hover:translate-y-0 disabled:hover:shadow-lg touch-manipulation"
+                          style={{ touchAction: 'manipulation' }}
                         >
                           <span className="relative flex items-center justify-center gap-2">
                             {isStarting ? (
@@ -1486,28 +1485,28 @@ export default function SessionPage({ params }: { params: { id: string } }) {
             </div>
 
             {/* Transcript */}
-            <div className="rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white p-6 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-medium text-slate-900">Transcript</h2>
+            <div className="rounded-xl sm:rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white p-4 sm:p-5 md:p-6 shadow-sm">
+              <div className="flex items-center justify-between mb-3 sm:mb-4">
+                <h2 className="text-base sm:text-lg font-medium text-slate-900">Transcript</h2>
                 <span className="text-xs text-slate-500 uppercase tracking-wide">
                   {transcript.length} {transcript.length === 1 ? "turn" : "turns"}
                 </span>
               </div>
               <div 
                 ref={transcriptScrollRef}
-                className="bg-slate-50 p-4 min-h-[200px] max-h-[400px] overflow-y-auto smooth-scroll"
+                className="bg-slate-50 p-3 sm:p-4 min-h-[180px] sm:min-h-[200px] max-h-[300px] sm:max-h-[350px] md:max-h-[400px] overflow-y-auto smooth-scroll"
               >
                 {transcript.length > 0 ? (
-                  <div className="space-y-3">
+                  <div className="space-y-2 sm:space-y-3">
                     {transcript
                       .sort((a, b) => b.timestamp - a.timestamp)
                       .map((event, index) => (
                         <div
                           key={`${event.id}-${index}`}
-                          className={`p-3 text-sm rounded-lg transition-all duration-200 ease-out ${
+                          className={`p-2.5 sm:p-3 text-sm rounded-lg transition-all duration-200 ease-out ${
                             event.speaker === "user"
-                              ? "bg-emerald-600 text-white ml-8"
-                              : "bg-white text-slate-900 mr-8 border border-slate-200"
+                              ? "bg-emerald-600 text-white ml-4 sm:ml-6 md:ml-8"
+                              : "bg-white text-slate-900 mr-4 sm:mr-6 md:mr-8 border border-slate-200"
                           }`}
                         >
                           <div className="flex items-start gap-2">
@@ -1522,7 +1521,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                       ))}
                   </div>
                 ) : (
-                  <div className="flex items-center justify-center h-full text-center py-12">
+                  <div className="flex items-center justify-center h-full text-center py-8 sm:py-12">
                     <p className="text-slate-400 text-sm">
                       Conversation transcript will appear here...
                     </p>
@@ -1533,32 +1532,33 @@ export default function SessionPage({ params }: { params: { id: string } }) {
           </div>
 
           {/* Right Column - Status & Controls */}
-          <div className="space-y-6 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto lg:pr-2 smooth-scroll">
+          <div className="space-y-4 sm:space-y-5 md:space-y-6 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto lg:pr-2 smooth-scroll">
             {/* Personality Controls - Only for avatars with custom persona support and before session starts */}
             {avatar?.supportsCustomPersona && !isConnected && (
-              <div className="rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white p-6 shadow-sm backdrop-blur space-y-6">
-                <div className="flex items-start justify-between gap-4">
-                  <h2 className="text-lg font-semibold text-slate-900">Avatar Settings</h2>
-                  <div className="text-[11px] text-slate-500 leading-tight text-right">
+              <div className="rounded-xl sm:rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white p-4 sm:p-5 md:p-6 shadow-sm backdrop-blur space-y-4 sm:space-y-5 md:space-y-6">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-4">
+                  <h2 className="text-base sm:text-lg font-semibold text-slate-900">Avatar Settings</h2>
+                  <div className="text-[11px] text-slate-500 leading-tight text-left sm:text-right">
                     Set before starting
                     <div className="text-slate-400">Locked during session</div>
                   </div>
                 </div>
 
                 {/* SECTION 1: LANGUAGE */}
-                <div className="space-y-3">
+                <div className="space-y-2 sm:space-y-3">
                   <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">1. Language</h3>
-                  <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4">
+                  <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-3 sm:p-4">
                     <select
                       value={personalityControls.language || 'english'}
                       onChange={(e) => setPersonalityControls(prev => ({
                         ...prev,
                         language: e.target.value as 'english' | 'spanish',
                         // Reset accent when switching to Spanish
-                        accentType: e.target.value === 'spanish' ? 'none' : prev.accentType,
+                        accentType: e.target.value === 'spanish' ? undefined : prev.accentType,
                         accentStrength: e.target.value === 'spanish' ? 0 : prev.accentStrength,
                       }))}
-                      className="w-full px-3 py-2 text-sm border border-slate-300/80 rounded-lg bg-white hover:border-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 transition-all duration-200 ease-out"
+                      className="w-full px-3 py-2.5 sm:py-2 min-h-[44px] sm:min-h-0 text-sm border border-slate-300/80 rounded-lg bg-white hover:border-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 transition-all duration-200 ease-out touch-manipulation"
+                      style={{ touchAction: 'manipulation' }}
                       aria-label="Language selection"
                     >
                       <option value="english">English</option>
@@ -1568,12 +1568,12 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                 </div>
 
                 {/* SECTION 2: EMOTIONS */}
-                <div className="space-y-3">
+                <div className="space-y-2 sm:space-y-3">
                   <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">2. Emotions</h3>
                   
-                  <div className="space-y-3">
+                  <div className="space-y-2 sm:space-y-3">
                     {/* Grief Level */}
-                    <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
+                    <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-3 sm:p-4 space-y-2">
                       <div className="flex items-center justify-between">
                         <label className="text-sm font-medium text-slate-700">
                           Grief Level
@@ -1592,7 +1592,8 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                           ...prev,
                           sadnessLevel: Number(e.target.value)
                         }))}
-                        className="w-full h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 transition-all duration-200 ease-out"
+                        className="w-full h-2 sm:h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 transition-all duration-200 ease-out touch-manipulation"
+                        style={{ touchAction: 'manipulation' }}
                         aria-label="Sadness level"
                       />
                       <p className="text-xs text-slate-500">
@@ -1605,32 +1606,33 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                     </div>
 
                     {/* Secondary Emotion */}
-                    <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
+                    <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-3 sm:p-4 space-y-2">
                       <div className="flex items-center justify-between">
                         <label className="text-sm font-medium text-slate-700">
                           Secondary Emotion
                         </label>
-                        <span className="text-xs text-slate-500">Optional</span>
                       </div>
                       <select
                         value={personalityControls.copingStyle || 'none'}
                         onChange={(e) => setPersonalityControls(prev => ({
                           ...prev,
-                          copingStyle: e.target.value as 'none' | 'anger' | 'anxiety' | 'nervousness'
+                          copingStyle: e.target.value as 'none' | 'anger' | 'anxiety' | 'nervousness' | 'indecisiveness'
                         }))}
-                        className="w-full px-3 py-2 text-sm border border-slate-300/80 rounded-lg bg-white hover:border-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 transition-all duration-200 ease-out"
+                        className="w-full px-3 py-2.5 sm:py-2 min-h-[44px] sm:min-h-0 text-sm border border-slate-300/80 rounded-lg bg-white hover:border-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 transition-all duration-200 ease-out touch-manipulation"
+                        style={{ touchAction: 'manipulation' }}
                         aria-label="Coping style"
                       >
                         <option value="none">None</option>
                         <option value="anger">Anger (Defensive, guarded)</option>
                         <option value="anxiety">Anxiety (Worried, overthinking)</option>
                         <option value="nervousness">Nervousness (Hesitant, uncertain)</option>
+                        <option value="indecisiveness">Indecisiveness (Can't choose, seeks guidance)</option>
                       </select>
                     </div>
 
                     {/* Intensity - Only show if secondary emotion is selected */}
                     {personalityControls.copingStyle && personalityControls.copingStyle !== 'none' && (
-                      <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
+                      <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-3 sm:p-4 space-y-2">
                         <div className="flex items-center justify-between">
                           <label className="text-sm font-medium text-slate-700">
                             Intensity
@@ -1649,7 +1651,8 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                             ...prev,
                             copingIntensity: Number(e.target.value)
                           }))}
-                          className="w-full h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 transition-all duration-200 ease-out"
+                          className="w-full h-2 sm:h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 transition-all duration-200 ease-out touch-manipulation"
+                          style={{ touchAction: 'manipulation' }}
                           aria-label="Coping intensity"
                         />
                         <p className="text-xs text-slate-500">
@@ -1666,38 +1669,35 @@ export default function SessionPage({ params }: { params: { id: string } }) {
 
                 {/* SECTION 3: ACCENT */}
                 {personalityControls.language !== 'spanish' && (
-                  <div className="space-y-3">
+                  <div className="space-y-2 sm:space-y-3">
                     <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">3. Accent</h3>
                     
                     {/* Accent Type */}
-                    <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
+                    <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-3 sm:p-4 space-y-2">
                       <label className="text-sm font-medium text-slate-700 block mb-2">
                         Accent Type
                       </label>
                       <select
-                        value={personalityControls.accentType || 'none'}
+                        value={personalityControls.accentType || 'midwestern'}
                         onChange={(e) => setPersonalityControls(prev => ({
                           ...prev,
-                          accentType: e.target.value as 'none' | 'midwestern' | 'texas-southern' | 'cajun' | 'indian-english',
+                          accentType: e.target.value as 'midwestern' | 'texas-southern' | 'cajun',
                           // If an accent is selected but strength is still 0, default to a heavy accent for training realism.
-                          accentStrength: e.target.value === 'none'
-                            ? 0
-                            : (prev.accentStrength && prev.accentStrength > 0 ? prev.accentStrength : 5)
+                          accentStrength: prev.accentStrength && prev.accentStrength > 0 ? prev.accentStrength : 5
                         }))}
-                        className="w-full px-3 py-2 text-sm border border-slate-300/80 rounded-lg bg-white hover:border-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 transition-all duration-200 ease-out"
+                        className="w-full px-3 py-2.5 sm:py-2 min-h-[44px] sm:min-h-0 text-sm border border-slate-300/80 rounded-lg bg-white hover:border-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 transition-all duration-200 ease-out touch-manipulation"
+                        style={{ touchAction: 'manipulation' }}
                         aria-label="Accent type"
                       >
-                        <option value="none">None (Standard English)</option>
                         <option value="midwestern">Midwestern</option>
                         <option value="texas-southern">Texas Southern</option>
                         <option value="cajun">Cajun</option>
-                        <option value="indian-english">Indian</option>
                       </select>
                     </div>
 
-                    {/* Accent Strength - Only show if accent type is selected */}
-                    {personalityControls.accentType && personalityControls.accentType !== 'none' && (
-                      <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-4 space-y-2">
+                    {/* Accent Strength - Always show since accent is always selected */}
+                    {personalityControls.accentType && (
+                      <div className="rounded-xl border border-slate-200/60 bg-slate-50/70 p-3 sm:p-4 space-y-2">
                         <div className="flex items-center justify-between">
                           <label className="text-sm font-medium text-slate-700">
                             Accent Strength
@@ -1716,7 +1716,8 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                             ...prev,
                             accentStrength: Number(e.target.value)
                           }))}
-                          className="w-full h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 transition-all duration-200 ease-out"
+                          className="w-full h-2 sm:h-1.5 bg-slate-200/80 rounded-full appearance-none cursor-pointer accent-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 transition-all duration-200 ease-out touch-manipulation"
+                          style={{ touchAction: 'manipulation' }}
                           aria-label="Accent strength"
                         />
                         <p className="text-xs text-slate-500">
@@ -1737,9 +1738,9 @@ export default function SessionPage({ params }: { params: { id: string } }) {
 
             {/* Show personality summary during session */}
             {avatar?.supportsCustomPersona && isConnected && (
-              <div className="rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white p-4 shadow-sm backdrop-blur">
-                <h3 className="text-sm font-semibold text-slate-900 mb-3">🔒 Active Settings</h3>
-                <div className="space-y-3 text-xs">
+              <div className="rounded-xl sm:rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white p-3 sm:p-4 shadow-sm backdrop-blur">
+                <h3 className="text-sm font-semibold text-slate-900 mb-2 sm:mb-3">🔒 Active Settings</h3>
+                <div className="space-y-2 sm:space-y-3 text-xs">
                   {/* Language */}
                   <div>
                     <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Language</div>
@@ -1768,7 +1769,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                   </div>
 
                   {/* Accent */}
-                  {personalityControls.language !== 'spanish' && personalityControls.accentType && personalityControls.accentType !== 'none' && (
+                  {personalityControls.language !== 'spanish' && personalityControls.accentType && (
                     <div>
                       <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Accent</div>
                       <div className="text-slate-900 font-medium">
@@ -1781,9 +1782,9 @@ export default function SessionPage({ params }: { params: { id: string } }) {
             )}
 
             {/* Connection Status */}
-            <div className="rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white p-6 shadow-sm space-y-5">
+            <div className="rounded-xl sm:rounded-2xl border border-slate-200/70 bg-gradient-to-br from-emerald-50/70 via-white/90 to-white p-4 sm:p-5 md:p-6 shadow-sm space-y-4 sm:space-y-5">
               <div>
-                <h2 className="text-lg font-medium text-slate-900">Connection</h2>
+                <h2 className="text-base sm:text-lg font-medium text-slate-900">Connection</h2>
                 <p className="text-sm text-slate-600 mt-1">
                   {status}
                 </p>
@@ -1795,15 +1796,15 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                   </div>
                 )}
                 {isConnected && silenceCoachMessage && (
-                  <div className={`mt-3 p-4 rounded-lg border-2 transition-all duration-300 ${
+                  <div className={`mt-3 p-3 sm:p-4 rounded-lg border-2 transition-all duration-300 ${
                     silenceCoachMessage.includes("Session ending") 
                       ? "bg-amber-50 border-amber-300 animate-pulse" 
                       : "bg-blue-50 border-blue-200"
                   }`}>
-                    <div className="flex items-center justify-between gap-3 mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-lg">⏰</span>
-                        <p className={`text-xs font-bold uppercase tracking-wide ${
+                    <div className="flex items-center justify-between gap-2 sm:gap-3 mb-2">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <span className="text-base sm:text-lg flex-shrink-0">⏰</span>
+                        <p className={`text-xs font-bold uppercase tracking-wide truncate ${
                           silenceCoachMessage.includes("Session ending") 
                             ? "text-amber-700" 
                             : "text-blue-700"
@@ -1818,20 +1819,21 @@ export default function SessionPage({ params }: { params: { id: string } }) {
                             cancelSilenceCoach();
                             silenceCoachEligibleRef.current = false;
                           }}
-                          className="text-xs font-medium text-blue-500 hover:text-blue-700 hover:underline transition-all duration-200 ease-out"
+                          className="text-xs font-medium text-blue-500 hover:text-blue-700 hover:underline transition-all duration-200 ease-out flex-shrink-0 min-h-[32px] px-2 touch-manipulation"
+                          style={{ touchAction: 'manipulation' }}
                         >
                           Dismiss
                         </button>
                       )}
                     </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <p className={`text-sm font-medium ${
+                    <div className="flex items-center justify-between gap-2 sm:gap-3">
+                      <p className={`text-xs sm:text-sm font-medium flex-1 min-w-0 ${
                         silenceCoachMessage.includes("Session ending") 
                           ? "text-amber-800" 
                           : "text-blue-900"
                       }`}>{silenceCoachMessage}</p>
                       {countdownSeconds !== null && !silenceCoachMessage.includes("Session ending") && (
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-shrink-0">
                           <span className="text-xs font-mono text-blue-600 font-bold">
                             {countdownSeconds}s
                           </span>
@@ -1845,7 +1847,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
               {connectedAt && (
                 <div>
                   <h3 className="text-sm font-medium text-slate-700">Session Duration</h3>
-                  <p className="text-2xl font-mono text-slate-900 mt-1">
+                  <p className="text-xl sm:text-2xl font-mono text-slate-900 mt-1">
                     {formatDuration(elapsedSeconds)}
                   </p>
                 </div>
@@ -1854,14 +1856,15 @@ export default function SessionPage({ params }: { params: { id: string } }) {
               {isConnected && (
                 <button
                   onClick={() => endSession("manual")}
-                  className="w-full px-4 py-3 bg-red-600 hover:bg-red-700 hover:shadow-lg hover:shadow-red-600/30 hover:-translate-y-0.5 active:translate-y-0 text-white font-medium rounded-lg transition-all duration-200 ease-out"
+                  className="w-full px-4 py-3 min-h-[48px] sm:min-h-0 bg-red-600 hover:bg-red-700 hover:shadow-lg hover:shadow-red-600/30 hover:-translate-y-0.5 active:translate-y-0 text-white text-sm sm:text-base font-medium rounded-lg transition-all duration-200 ease-out touch-manipulation"
+                  style={{ touchAction: 'manipulation' }}
                 >
                   End Session
                 </button>
               )}
 
               {error && (
-                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                <div className="p-3 sm:p-4 bg-red-50 border border-red-200 rounded-lg">
                   <p className="text-sm text-red-800">{error}</p>
                 </div>
               )}
@@ -1873,15 +1876,16 @@ export default function SessionPage({ params }: { params: { id: string } }) {
 
       {/* Session End Modal - Shows when session ended due to inactivity */}
       {sessionEndReason === "inactivity" && !isConnected && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 space-y-6 animate-in fade-in zoom-in duration-300 relative">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 sm:p-4">
+          <div className="bg-white rounded-xl sm:rounded-2xl shadow-2xl max-w-md w-full p-6 sm:p-8 space-y-4 sm:space-y-6 animate-in fade-in zoom-in duration-300 relative">
             <button
               onClick={() => setSessionEndReason(null)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 hover:rotate-90 active:rotate-0 transition-all duration-300 ease-out"
+              className="absolute top-3 right-3 sm:top-4 sm:right-4 p-2 min-w-[44px] min-h-[44px] sm:min-w-0 sm:min-h-0 flex items-center justify-center text-slate-400 hover:text-slate-600 hover:rotate-90 active:rotate-0 transition-all duration-300 ease-out touch-manipulation"
+              style={{ touchAction: 'manipulation' }}
               aria-label="Close"
             >
               <svg 
-                className="w-6 h-6" 
+                className="w-5 h-5 sm:w-6 sm:h-6" 
                 fill="none" 
                 viewBox="0 0 24 24" 
                 stroke="currentColor"
@@ -1895,11 +1899,11 @@ export default function SessionPage({ params }: { params: { id: string } }) {
               </svg>
             </button>
             
-            <div className="text-center space-y-4">
+            <div className="text-center space-y-3 sm:space-y-4 pr-8 sm:pr-0">
               <div className="flex justify-center">
-                <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center">
+                <div className="w-12 h-12 sm:w-16 sm:h-16 bg-amber-100 rounded-full flex items-center justify-center">
                   <svg 
-                    className="w-8 h-8 text-amber-600" 
+                    className="w-6 h-6 sm:w-8 sm:h-8 text-amber-600" 
                     fill="none" 
                     viewBox="0 0 24 24" 
                     stroke="currentColor"
@@ -1915,13 +1919,13 @@ export default function SessionPage({ params }: { params: { id: string } }) {
               </div>
               
               <div>
-                <h2 className="text-2xl font-semibold text-slate-900 mb-2">
+                <h2 className="text-xl sm:text-2xl font-semibold text-slate-900 mb-2">
                   Session Ended
                 </h2>
-                <p className="text-slate-600">
+                <p className="text-sm sm:text-base text-slate-600">
                   The session was automatically ended due to inactivity.
                 </p>
-                <p className="text-sm text-slate-500 mt-2">
+                <p className="text-xs sm:text-sm text-slate-500 mt-2">
                   You were silent for 25 seconds after the avatar finished speaking.
                 </p>
               </div>
